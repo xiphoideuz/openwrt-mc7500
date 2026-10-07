@@ -5,7 +5,9 @@ LuCI (JS) interface for the **ZTE MC7500 5G outdoor unit**, in the spirit of
 (which targets USB/mPCIe modems, while this package talks to the MC7500
 over its web API through the OpenWrt router).
 
-![Status page](docs/status.png)
+Status page sections: Connection, Radio (LTE + NR with signal bars),
+SIM, Data counters, Data plan (used/remaining vs. plan, alert threshold),
+plus Refresh and Reboot buttons.
 
 ## Features
 
@@ -19,7 +21,26 @@ over its web API through the OpenWrt router).
   backend cache intervals (stored in `/etc/config/zte_mc7500`).
 * **Reboot ODU** button with confirmation.
 * **CLI backend** `/usr/bin/zte_mc7500` (also usable over SSH):
-  `status [--json] [--cache N]`, `restart`, `cycle <seconds>`.
+
+```sh
+zte_mc7500 status                    # human-readable, 3ginfo-style
+zte_mc7500 status --json             # machine-readable JSON
+zte_mc7500 status --json --cache 30  # serve cache younger than 30s
+zte_mc7500 restart                    # reboot the ODU
+zte_mc7500 cycle 3600                # status + reboot every hour
+zte_mc7500 --version
+```
+
+## Scheduled reboot
+
+Use cron on the router (the ODU also has a native scheduled-reboot
+feature, but a cron job is visible and easy to change):
+
+```sh
+# reboot the ODU daily at 04:00
+echo '0 4 * * * /usr/bin/zte_mc7500 restart' >> /etc/crontabs/root
+/etc/init.d/cron restart
+```
 
 ## How it works
 
@@ -79,7 +100,17 @@ both UCI and defaults when using the CLI.
 
 * The modem password is stored in clear text in UCI (root-readable only),
   same practice as other LuCI apps holding device credentials.
+  **Change the modem's default password** in its own web UI, then update
+  `/etc/config/zte_mc7500` (or the Configuration page) to match — and never
+  commit your real password to git.
 * Rebooting the ODU drops the mobile link for a few minutes.
+* The LuCI pages assume an admin login; restricted users additionally need
+  the `luci-app-zte-mc7500` ACL granted (see `root/usr/share/rpcd/acl.d/`).
+
+## For agents
+
+See [AGENTS.md](AGENTS.md) for architecture notes, target constraints
+(BusyBox ash, no scp/python on the router) and the test/deploy loop.
 
 ## Credits
 

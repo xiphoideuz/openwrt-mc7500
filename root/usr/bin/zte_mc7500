@@ -36,6 +36,7 @@ BASE="https://${ZTE_IP}"
 UA="Mozilla/5.0 (X11; Linux aarch64) zte_mc7500/1.0"
 CTIMEOUT=8
 ZERO="00000000000000000000000000000000"
+VERSION="1.0.0"
 
 CJ=""      # cookie jar
 STOK=""    # session token
@@ -404,6 +405,7 @@ Usage: zte_mc7500.sh [--debug] <cmd> [args]
                 --cache N reuses a cached reply younger than N seconds
   restart           login + reboot the ODU
   cycle <seconds>   status + reboot every N seconds (min 10)
+  --version         print version
 
 Environment (all optional, defaults shown):
   ZTE_IP    modem address   (default: 192.168.254.1)
@@ -455,6 +457,7 @@ case "${1:-}" in
     rm -f "$CACHE_FILE" "$CACHE_FILE.ts" 2>/dev/null
     ;;
   cycle)          do_cycle "${2:-}" ;;
+  --version|-V)   printf 'zte_mc7500 %s\n' "$VERSION" ;;
   ''|-h|--help|help) usage ;;
   *) printf 'Unknown command: %s\n' "$1" >&2; usage; exit 1 ;;
 esac

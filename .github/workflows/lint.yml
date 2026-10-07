@@ -1,0 +1,59 @@
+name: lint
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shell syntax (ash)
+        run: |
+          sh -n root/usr/bin/zte_mc7500
+
+      - name: JS syntax
+        run: |
+          node --check htdocs/luci-static/resources/view/zte_mc7500/status.js
+          node --check htdocs/luci-static/resources/view/zte_mc7500/settings.js
+
+      - name: JSON validity
+        run: |
+          python3 -c "import json; json.load(open('root/usr/share/luci/menu.d/luci-app-zte-mc7500.json')); json.load(open('root/usr/share/rpcd/acl.d/luci-app-zte-mc7500.json'))"
+
+      - name: gettext coverage
+        run: |
+          python3 - <<'EOF'
+          import re, sys
+          js = open('htdocs/luci-static/resources/view/zte_mc7500/status.js').read() \
+             + open('htdocs/luci-static/resources/view/zte_mc7500/settings.js').read()
+          # collect every single-quoted chunk inside _(); chunks that are
+          # prefixes of a longer concatenated msgid are fine
+          used = set(re.findall(r"_\(\s*'((?:[^'\\]|\\.)*)'", js))
+          po = open('po/template/zte-mc7500.po').read()
+          missing = sorted(m for m in used if m not in po)
+          # chunks that are prefixes of a longer msgid are fine
+          missing = [m for m in missing if not any((m in line) for line in po.splitlines() if line.startswith('msgid'))]
+          if missing:
+              print('msgids missing from po/template:', missing)
+              sys.exit(1)
+          print('gettext OK (%d chunks)' % len(used))
+          EOF
+
+      - name: DOM id cross-check (status view)
+        run: |
+          python3 - <<'EOF'
+          import re, sys
+          js = open('htdocs/luci-static/resources/view/zte_mc7500/status.js').read()
+          read = set(re.findall(r"getElementById\('([^']+)'", js)) | set(re.findall(r"setText\('([^']+)'", js))
+          defined = set(re.findall(r"'id':\s*'([^']+)'", js))
+          defined |= set(re.findall(r"\)\.id\s*=\s*'([^']+)'", js))
+          defined |= set(re.findall(r"row2\(\w+,\s*[^,]+,\s*'([^']+)'\)", js))
+          missing = sorted(i for i in read if i not in defined)
+          if missing:
+              print('DOM ids read but never created:', missing)
+              sys.exit(1)
+          print('DOM ids OK (%d)' % len(read))
+          EOF

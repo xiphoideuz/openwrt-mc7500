@@ -1,0 +1,10 @@
+# OpenWrt build artefacts
+bin/
+*.ipk
+*.sdk
+
+# editor / OS noise
+.DS_Store
+*.swp
+*~
+.vscode/
