@@ -36,7 +36,7 @@ BASE="https://${ZTE_IP}"
 UA="Mozilla/5.0 (X11; Linux aarch64) zte_mc7500/1.0"
 CTIMEOUT=8
 ZERO="00000000000000000000000000000000"
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 CJ=""      # cookie jar
 STOK=""    # session token
@@ -217,7 +217,8 @@ do_status() {
     _mtime="$(cat "$CACHE_FILE.ts" 2>/dev/null || echo 0)"
     case "$_mtime" in ''|*[!0-9]*) _mtime=0 ;; esac
     if [ $(( $(date +%s) - _mtime )) -lt "$CACHE_SECS" ]; then
-      cat "$CACHE_FILE"
+      # mark the served copy so the UI can show it came from cache
+      sed 's/"cached":false/"cached":true/' "$CACHE_FILE"
       return 0
     fi
   fi
@@ -233,8 +234,9 @@ do_status() {
   _clr="$(ubus "zwrt_data" "get_wwandst_clearday" '{"source_module":"web","cid":1}' "get_wwandst_clearday")"
 
   if [ "$_json" = "1" ]; then
-    _out="$(printf '{"meta":{"ip":"%s"},"wan":%s,"radio":%s,"sim":%s,"iface":%s,"usage":%s,"device":%s,"plan":%s,"clearday":%s}\n' \
+    _out="$(printf '{"meta":{"ip":"%s","generated":%d,"cached":false},"wan":%s,"radio":%s,"sim":%s,"iface":%s,"usage":%s,"device":%s,"plan":%s,"clearday":%s}\n' \
       "$ZTE_IP" \
+      "$(date +%s)" \
       "$(printf '%s' "$_status" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')" \
       "$(printf '%s' "$_net" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')" \
       "$(printf '%s' "$_sim" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')" \

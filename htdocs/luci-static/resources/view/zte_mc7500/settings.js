@@ -34,7 +34,7 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'user', _('Modem username'),
-			_('Web interface username (case sensitive, usually "Admin").'));
+			_('Web interface username (case sensitive, usually “Admin”).'));
 		o.placeholder = 'Admin';
 		o.rmempty = false;
 
@@ -44,7 +44,8 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'refresh', _('Page refresh (seconds)'),
-			_('How often the status page polls the modem. Minimum 5.'));
+			_('How often the status page auto-refreshes. Minimum 5. ' +
+			  'The last-refresh time is shown at the bottom of the status page.'));
 		o.datatype = 'uinteger';
 		o.placeholder = '10';
 		o.rmempty = false;

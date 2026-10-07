@@ -56,7 +56,10 @@ po/template/zte-mc7500.po                    gettext template (English source)
   in ash but keep style), no `grep -P`, no `stat` (applet missing),
   no `base64`/`openssl`/`python3` on target. Tools guaranteed:
   `curl`, `sha256sum` (busybox), `jsonfilter`, `awk`, `sed`, `tr`, `uci`.
-* stdout of `status --json` must be **pure JSON** (logs → stderr).
+* Status JSON `meta` carries `generated` (epoch) and `cached` (bool):
+  fresh queries stamp both, cache hits flip `cached` to true via sed so
+  the LuCI footer can show live-vs-cache age. `status --json` stdout must
+  stay **pure JSON** (logs → stderr).
   Exit codes: `0` ok, `1` error, `3` reserved. Keep `--version` in sync
   with `PKG_VERSION` in `Makefile`.
 * LuCI JS: only stock-resource APIs (`view/fs/ui/uci/poll/form`).

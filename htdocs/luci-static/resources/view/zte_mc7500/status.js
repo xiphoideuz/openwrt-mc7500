@@ -107,6 +107,12 @@ function row2(table, label, id) {
 	]));
 }
 
+function fmtDateTime(ts) {
+	if (!ts) return '–';
+	var d = new Date(ts);
+	return d.toLocaleString();
+}
+
 function setText(id, txt) {
 	var el = document.getElementById(id);
 	if (el)
@@ -142,7 +148,35 @@ return view.extend({
 		});
 	},
 
+	updateFooter: function(json) {
+		if (json && json.radio) {
+			var when = fmtDateTime(Date.now());
+			var meta = json.meta || {};
+			if (meta.generated) {
+				var age = Math.max(0, Math.round(Date.now() / 1000 - num(meta.generated)));
+				if (meta.cached === true)
+					setText('zte-lastrefresh',
+						_('Last refresh: %s (from cache, %ss old)').format(when, age));
+				else if (meta.cached === false)
+					setText('zte-lastrefresh',
+						_('Last refresh: %s (live from modem)').format(when));
+				else
+					setText('zte-lastrefresh',
+						_('Last refresh: %s').format(when));
+			}
+			else {
+				setText('zte-lastrefresh',
+					_('Last refresh: %s').format(when));
+			}
+		}
+		else {
+			setText('zte-lastrefresh',
+				_('Last attempt: %s (failed)').format(fmtDateTime(Date.now())));
+		}
+	},
+
 	updateView: function(json) {
+		this.updateFooter(json);
 		var banner = document.getElementById('zte-offline');
 		if (!json || !json.radio) {
 			if (banner)
@@ -442,6 +476,10 @@ return view.extend({
 				planTable,
 				planOver
 			]),
+			E('div', { 'id': 'zte-footer', 'style': 'display:flex;justify-content:space-between;flex-wrap:wrap;font-size:85%;color:#666;margin:6px 0;' }, [
+				E('span', { 'id': 'zte-lastrefresh' }, _('Last refresh: %s').format('–')),
+				E('span', { 'id': 'zte-autorefresh' }, '')
+			]),
 			E('div', { 'class': 'cbi-page-actions' }, [
 				E('button', {
 					'class': 'btn cbi-button-action',
@@ -469,6 +507,9 @@ return view.extend({
 				}, _('Reboot ODU'))
 			])
 		]);
+
+		setText('zte-autorefresh',
+			_('Auto-refresh every %ss (cache %ss)').format(cfg.refresh, cfg.cache));
 
 		self.fetchStatus(cfg.cache).then(function(json) {
 			self.updateView(json);

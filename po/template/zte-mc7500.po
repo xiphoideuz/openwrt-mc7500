@@ -25,7 +25,7 @@ msgstr ""
 msgid "Modem username"
 msgstr ""
 
-msgid "Web interface username (case sensitive, usually \"Admin\")."
+msgid "Web interface username (case sensitive, usually “Admin”)."
 msgstr ""
 
 msgid "Modem password"
@@ -37,8 +37,6 @@ msgstr ""
 msgid "Page refresh (seconds)"
 msgstr ""
 
-msgid "How often the status page polls the modem. Minimum 5."
-msgstr ""
 
 msgid "Backend cache (seconds)"
 msgstr ""
@@ -251,4 +249,22 @@ msgid "unknown"
 msgstr ""
 
 msgid "up"
+msgstr ""
+
+msgid "Last refresh: %s"
+msgstr ""
+
+msgid "Last refresh: %s (live from modem)"
+msgstr ""
+
+msgid "Last refresh: %s (from cache, %ss old)"
+msgstr ""
+
+msgid "Last attempt: %s (failed)"
+msgstr ""
+
+msgid "Auto-refresh every %ss (cache %ss)"
+msgstr ""
+
+msgid "How often the status page auto-refreshes. Minimum 5. The last-refresh time is shown at the bottom of the status page."
 msgstr ""
