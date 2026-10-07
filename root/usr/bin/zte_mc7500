@@ -36,7 +36,7 @@ BASE="https://${ZTE_IP}"
 UA="Mozilla/5.0 (X11; Linux aarch64) zte_mc7500/1.0"
 CTIMEOUT=8
 ZERO="00000000000000000000000000000000"
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 CJ=""      # cookie jar
 STOK=""    # session token
@@ -563,6 +563,312 @@ _sync_via_init() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# Radio policy (advanced): band locks, network mode, antenna.
+# Reads come from nwinfo_get_netinfo (+ uci for the antenna); writes use
+# the same ubus setters as the modem's own developer-options page.
+# Every setter is followed by a read-back verify. Any write drops the
+# status cache. See AGENTS.md for the RPC reference.
+# ---------------------------------------------------------------------------
+
+# _radio_read: fetch netinfo + antenna (caller must be logged in already);
+# sets globals R_LTE, R_LTEMASK, R_SA, R_NSA, R_NRDC, R_NET, R_NETMODE,
+# R_LTECELL, R_NRCELL, R_ANT
+_radio_read() {
+  _r_ni="$(ubus_auth "zte_nwinfo_api" "nwinfo_get_netinfo" '{}' "nwinfo_get_netinfo")"
+  R_LTE="$(jf "$_r_ni" '@[0].result[1].lte_band')"
+  R_LTEMASK="$(jf "$_r_ni" '@[0].result[1].lte_band_lock')"
+  R_SA="$(jf "$_r_ni" '@[0].result[1].nr5g_sa_band_lock')"
+  R_NSA="$(jf "$_r_ni" '@[0].result[1].nr5g_nsa_band_lock')"
+  R_NRDC="$(jf "$_r_ni" '@[0].result[1].nr5g_nrdc_band_lock')"
+  R_NET="$(jf "$_r_ni" '@[0].result[1].net_select')"
+  R_NETMODE="$(jf "$_r_ni" '@[0].result[1].net_select_mode')"
+  R_LTECELL="$(jf "$_r_ni" '@[0].result[1].lock_lte_cell')"
+  R_NRCELL="$(jf "$_r_ni" '@[0].result[1].lock_nr_cell')"
+  _r_ant="$(ubus_auth "uci" "get" '{"config":"zte_nwinfo","section":"odu_as_mode"}' "uci_get")"
+  R_ANT="$(jf "$_r_ant" '@[0].result[1].values.as_mode')"
+}
+
+# _radio_set <object> <method> <args-json>: ubus_auth + check result[0]==0
+_radio_set() {
+  _rs_r="$(ubus_auth "$1" "$2" "$3" "$2")"
+  dbg "set $1/$2: $_rs_r"
+  [ "$(printf '%s' "$_rs_r" | jsonfilter -q -e '@[0].result[0]' 2>/dev/null)" = "0" ]
+}
+
+_radio_invalidate() {
+  rm -f "$CACHE_FILE" "$CACHE_FILE.ts" 2>/dev/null
+}
+
+# _norm_bands <list>: strip spaces, validate digits/commas; prints clean list
+_norm_bands() {
+  _nb="$(printf '%s' "$1" | tr -d ' \t')"
+  case "$_nb" in
+    ''|*[!0-9,]*) return 1 ;;
+    ,*|*,|*,,*) return 1 ;;
+  esac
+  printf '%s' "$_nb"
+}
+
+do_bands() {
+  zte_login
+  _radio_read
+  if [ "$1" = "--json" ]; then
+    printf '{"lte_band":"%s","lte_band_lock":"%s","nr5g_sa_band_lock":"%s","nr5g_nsa_band_lock":"%s","nr5g_nrdc_band_lock":"%s","net_select":"%s","net_select_mode":"%s","lock_lte_cell":"%s","lock_nr_cell":"%s","antenna":"%s"}\n' \
+      "$R_LTE" "$R_LTEMASK" "$R_SA" "$R_NSA" "$R_NRDC" \
+      "$R_NET" "$R_NETMODE" "$R_LTECELL" "$R_NRCELL" "$R_ANT"
+    zte_logout
+    return 0
+  fi
+  printf -- '--- Radio policy ---\n'
+  printf 'LTE bands     : %s (mask %s)\n' "${R_LTE:-(auto)}" "${R_LTEMASK:-?}"
+  printf 'NR SA bands   : %s\n' "${R_SA:-(auto)}"
+  printf 'NR NSA bands  : %s\n' "${R_NSA:-(auto)}"
+  printf 'Network mode  : %s (%s)\n' "${R_NET:-?}" "${R_NETMODE:-?}"
+  printf 'Antenna       : %s\n' "${R_ANT:-?}"
+  printf 'LTE cell lock : %s\n' "${R_LTECELL:-(none)}"
+  printf 'NR cell lock  : %s\n' "${R_NRCELL:-(none)}"
+  zte_logout
+}
+
+# _set_ltebands <list>: returns 0 on verified success
+_set_ltebands() {
+  _radio_read
+  _old="$R_LTE"
+  _radio_set "zte_nwinfo_api" "nwinfo_set_lte_ext_band" \
+    '{"lte_band":"'"$1"'"}' || return 1
+  _radio_read
+  [ "$R_LTE" = "$1" ] || return 1
+  _radio_invalidate
+  printf 'LTE bands: %s -> %s\n' "${_old:-(auto)}" "$R_LTE"
+  return 0
+}
+
+_set_sabands() {
+  _radio_read
+  _old="$R_SA"
+  _radio_set "zte_nwinfo_api" "nwinfo_set_sa_bandlock" \
+    '{"nr5g_sa_band_lock":"'"$1"'"}' || return 1
+  _radio_read
+  [ "$R_SA" = "$1" ] || return 1
+  _radio_invalidate
+  printf 'NR SA bands: %s -> %s\n' "${_old:-(auto)}" "$R_SA"
+  return 0
+}
+
+_set_nsabands() {
+  _radio_read
+  _old="$R_NSA"
+  _radio_set "zte_nwinfo_api" "nwinfo_set_sa_bandlock" \
+    '{"nr5g_band":"'"$1"'","nr5g_type":"1"}' || return 1
+  _radio_read
+  [ "$R_NSA" = "$1" ] || return 1
+  _radio_invalidate
+  printf 'NR NSA bands: %s -> %s\n' "${_old:-(auto)}" "$R_NSA"
+  return 0
+}
+
+do_bandlock() {
+  _which="$1"; _list="$2"
+  [ -n "$_which" ] && [ -n "$_list" ] || die "usage: $0 bandlock lte|sa|nsa <bands>  (e.g. $0 bandlock lte 3,5)"
+  _list="$(_norm_bands "$_list")" || die "bad band list (want digits+commas, e.g. 3,5): $2"
+  zte_login
+  case "$_which" in
+    lte) _set_ltebands "$_list" || { zte_logout; die "LTE band lock refused or verify failed"; } ;;
+    sa)  _set_sabands "$_list"  || { zte_logout; die "NR SA band lock refused or verify failed"; } ;;
+    nsa) _set_nsabands "$_list" || { zte_logout; die "NR NSA band lock refused or verify failed"; } ;;
+    *) zte_logout; die "usage: $0 bandlock lte|sa|nsa <bands>" ;;
+  esac
+  zte_logout
+}
+
+do_bandunlock() {
+  printf 'Resetting bands + cell locks to modem auto state...\n'
+  zte_login
+  _radio_set "zte_nwinfo_api" "nwinfo_reset_band_cell_setting" '{}' \
+    || { zte_logout; die "modem refused the reset"; }
+  _radio_invalidate
+  zte_logout
+  printf 'Reset sent. Re-reading policy in a moment with: %s bands\n' "$0"
+}
+
+do_netmode() {
+  if [ -z "$1" ] || [ "$1" = "show" ]; then
+    zte_login
+    _radio_read
+    printf 'Network mode: %s (%s)\n' "${R_NET:-?}" "${R_NETMODE:-?}"
+    printf 'Choices: WL_AND_5G (5G/4G auto), LTE_AND_5G (5G NSA), Only_5G (5G SA), Only_LTE (4G)\n'
+    zte_logout
+    return 0
+  fi
+  case "$1" in
+    WL_AND_5G|LTE_AND_5G|Only_5G|Only_LTE) ;;
+    *) die "usage: $0 netmode [WL_AND_5G|LTE_AND_5G|Only_5G|Only_LTE]" ;;
+  esac
+  printf 'Setting network mode to %s (may briefly re-register)...\n' "$1"
+  zte_login
+  _radio_set "zte_nwinfo_api" "nwinfo_set_netselect" \
+    '{"net_select":"'"$1"'"}' || { zte_logout; die "modem refused the mode change"; }
+  _radio_read
+  [ "$R_NET" = "$1" ] || { zte_logout; die "verify failed (modem reports $R_NET)"; }
+  _radio_invalidate
+  zte_logout
+  printf 'Network mode now: %s\n' "$R_NET"
+}
+
+do_antenna() {
+  if [ -z "$1" ] || [ "$1" = "show" ]; then
+    zte_login
+    _radio_read
+    printf 'Antenna: %s\n' "${R_ANT:-?}"
+    printf 'Choices: auto, front_directional\n'
+    zte_logout
+    return 0
+  fi
+  case "$1" in
+    auto|front_directional) ;;
+    *) die "usage: $0 antenna [auto|front_directional]" ;;
+  esac
+  zte_login
+  _radio_set "zte_nwinfo_api" "nwinfo_set_odu_as_mode" \
+    '{"odu_as_mode":"'"$1"'"}' || { zte_logout; die "modem refused the antenna change"; }
+  _radio_read
+  [ "$R_ANT" = "$1" ] || { zte_logout; die "verify failed (modem reports $R_ANT)"; }
+  _radio_invalidate
+  zte_logout
+  printf 'Antenna now: %s\n' "$R_ANT"
+}
+
+do_apn() {
+  zte_login
+  _r="$(ubus_auth "zwrt_apn_object" "getApnAtCid" '{"cid":1}' "getApnAtCid")"
+  zte_logout
+  _prof="$(jf "$_r" '@[0].result[1].profilename')"
+  _apn="$(jf "$_r" '@[0].result[1].wanapn')"
+  _pdp="$(jf "$_r" '@[0].result[1].pdpType')"
+  _auth="$(jf "$_r" '@[0].result[1].pppAuthMode')"
+  _user="$(jf "$_r" '@[0].result[1].username')"
+  _valid="$(jf "$_r" '@[0].result[1].isValid')"
+  [ -n "$_prof" ] || die "APN query failed"
+  case "$_pdp" in 1) _pdpn="IPv4";; 2) _pdpn="IPv6";; 3) _pdpn="IPv4v6";; *) _pdpn="$_pdp";; esac
+  if [ "$1" = "--json" ]; then
+    printf '{"profile":"%s","apn":"%s","pdp":"%s","auth":%s,"user":"%s","valid":%s}\n' \
+      "$_prof" "$_apn" "$_pdpn" "${_auth:-0}" "$_user" "${_valid:-0}"
+    return 0
+  fi
+  printf -- '--- APN (read-only) ---\n'
+  printf 'Profile       : %s\n' "$_prof"
+  printf 'APN           : %s\n' "$_apn"
+  printf 'PDP type      : %s\n' "$_pdpn"
+  printf 'Auth mode     : %s\n' "${_auth:-?}"
+  printf 'Username      : %s\n' "${_user:-(none)}"
+  printf 'Password      : (stored encrypted on modem, not readable)\n'
+}
+
+# Saved radio states live in a plain flatfile (NOT uci), one line per state:
+#   name|epoch|lte|nr_sa|nr_nsa|netmode|antenna
+STATES_FILE="/etc/zte_mc7500.states"
+
+# NOTE: name matching uses [|] (a character class), NOT \| which is
+# alternation in ERE and would match every line.
+_states_get() {
+  [ -f "$STATES_FILE" ] || return 1
+  _sg_line="$(grep -E "^$1[|]" "$STATES_FILE" 2>/dev/null | tail -n 1)"
+  [ -n "$_sg_line" ] || return 1
+  printf '%s\n' "$_sg_line"
+}
+
+_states_valid_name() {
+  case "$1" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+  return 0
+}
+
+do_states() {
+  _cmd="$1"; _name="$2"
+  case "$_cmd" in
+    list|'')
+      if [ "${_name}" = "--json" ]; then
+        printf '['
+        _first=1
+        if [ -f "$STATES_FILE" ]; then
+          while IFS='|' read -r _n _ts _lte _sa _nsa _net _ant; do
+            case "$_n" in ''|\#*) continue ;; esac
+            [ "$_first" = "1" ] || printf ','
+            _first=0
+            printf '{"name":"%s","saved":%s,"lte":"%s","sa":"%s","nsa":"%s","net":"%s","ant":"%s"}' \
+              "$_n" "${_ts:-0}" "$_lte" "$_sa" "$_nsa" "$_net" "$_ant"
+          done < "$STATES_FILE"
+        fi
+        printf ']\n'
+        return 0
+      fi
+      if [ ! -f "$STATES_FILE" ] || [ ! -s "$STATES_FILE" ]; then
+        printf 'No saved radio states (%s missing or empty).\n' "$STATES_FILE"
+        return 0
+      fi
+      printf '%-14s %-16s %-10s %-12s %-12s %-11s %s\n' \
+        "NAME" "SAVED" "LTE" "NR-SA" "NR-NSA" "NETMODE" "ANTENNA"
+      while IFS='|' read -r _n _ts _lte _sa _nsa _net _ant; do
+        case "$_n" in ''|\#*) continue ;; esac
+        printf '%-14s %-16s %-10s %-12s %-12s %-11s %s\n' \
+          "$_n" "$(date -d "@$_ts" '+%F %T' 2>/dev/null || printf '@%s' "$_ts")" \
+          "${_lte:-auto}" "${_sa:-auto}" "${_nsa:-auto}" \
+          "${_net:-?}" "${_ant:-?}"
+      done < "$STATES_FILE"
+      ;;
+    save)
+      _states_valid_name "$_name" || die "usage: $0 states save <name>  (letters/digits/_/-)"
+      zte_login
+      _radio_read
+      _tmp="$(mktemp /tmp/zte_states.XXXXXX)" || { zte_logout; die "mktemp failed"; }
+      if [ -f "$STATES_FILE" ]; then
+        grep -Ev "^$_name[|]" "$STATES_FILE" 2>/dev/null > "$_tmp" || true
+      else
+        : > "$_tmp"
+      fi
+      printf '%s|%s|%s|%s|%s|%s|%s\n' "$_name" "$(date +%s)" \
+        "$R_LTE" "$R_SA" "$R_NSA" "$R_NET" "$R_ANT" >> "$_tmp"
+      cat "$_tmp" > "$STATES_FILE"
+      rm -f "$_tmp"
+      zte_logout
+      printf 'State "%s" saved: LTE=%s SA=%s NSA=%s mode=%s ant=%s\n' \
+        "$_name" "${R_LTE:-auto}" "${R_SA:-auto}" "${R_NSA:-auto}" \
+        "${R_NET:-?}" "${R_ANT:-?}"
+      ;;
+    restore)
+      _states_valid_name "$_name" || die "usage: $0 states restore <name>"
+      _line="$(_states_get "$_name")" || die "no saved state named: $_name"
+      _s_lte="$(printf '%s' "$_line" | cut -d'|' -f3)"
+      _s_sa="$(printf '%s' "$_line" | cut -d'|' -f4)"
+      _s_nsa="$(printf '%s' "$_line" | cut -d'|' -f5)"
+      _s_net="$(printf '%s' "$_line" | cut -d'|' -f6)"
+      _s_ant="$(printf '%s' "$_line" | cut -d'|' -f7)"
+      printf 'Restoring state "%s"...\n' "$_name"
+      zte_login
+      # one session for the whole restore, small pauses so the modem
+      # accepts back-to-back writes
+      [ -n "$_s_lte" ] && { _set_ltebands "$_s_lte" || { zte_logout; die "restore failed at LTE bands"; }; sleep 2; }
+      [ -n "$_s_sa" ] && { _set_sabands "$_s_sa" || { zte_logout; die "restore failed at NR SA bands"; }; sleep 2; }
+      [ -n "$_s_nsa" ] && { _set_nsabands "$_s_nsa" || { zte_logout; die "restore failed at NR NSA bands"; }; sleep 2; }
+      [ -n "$_s_net" ] && { _radio_set "zte_nwinfo_api" "nwinfo_set_netselect" '{"net_select":"'"$_s_net"'"}' || { zte_logout; die "restore failed at net mode"; }; sleep 2; }
+      [ -n "$_s_ant" ] && { _radio_set "zte_nwinfo_api" "nwinfo_set_odu_as_mode" '{"odu_as_mode":"'"$_s_ant"'"}' || { zte_logout; die "restore failed at antenna"; }; }
+      _radio_invalidate
+      zte_logout
+      printf 'State "%s" restored.\n' "$_name"
+      ;;
+    delete|rm)
+      _states_valid_name "$_name" || die "usage: $0 states delete <name>"
+      _states_get "$_name" >/dev/null || die "no saved state named: $_name"
+      _tmp="$(mktemp /tmp/zte_states.XXXXXX)" || die "mktemp failed"
+      grep -Ev "^$_name[|]" "$STATES_FILE" 2>/dev/null > "$_tmp" || true
+      cat "$_tmp" > "$STATES_FILE"
+      rm -f "$_tmp"
+      printf 'State "%s" deleted.\n' "$_name"
+      ;;
+    *) die "usage: $0 states [list|save|restore|delete] <name>" ;;
+  esac
+}
+
 do_cycle() {
   _secs="$1"
   case "$_secs" in ''|*[!0-9]*) die "cycle needs seconds, e.g. $0 cycle 3600" ;; esac
@@ -588,6 +894,16 @@ Usage: zte_mc7500.sh [--debug] <cmd> [args]
   connect           bring the data session up (modem homepage button)
   disconnect        take the data session down
   reconnect         data session down, wait, up
+  bands [--json]    show radio policy: band locks, net mode, antenna, APN
+  bandlock lte|sa|nsa <bands>
+                lock radio bands, e.g. bandlock lte 3,5  (ADVANCED)
+  bandunlock        reset bands + cell locks to modem auto state (ADVANCED)
+  netmode [mode]    show/set network mode: WL_AND_5G, LTE_AND_5G,
+                Only_5G, Only_LTE (ADVANCED)
+  antenna [mode]    show/set ODU antenna: auto, front_directional (ADVANCED)
+  apn [--json]      show current APN profile (read-only)
+  states list|save|restore|delete <name>
+                save/restore named radio states to /etc/zte_mc7500.states
   schedule [show|on|off|apply|HH:MM]
                 manage the daily scheduled reboot (cron, visible in
                 System -> Scheduled Tasks); HH:MM enables it daily
@@ -646,6 +962,13 @@ case "${1:-}" in
   connect)    do_conn up ;;
   disconnect) do_conn down ;;
   reconnect)  do_conn restart ;;
+  bands)      do_bands "${2:-}" ;;
+  bandlock)   do_bandlock "${2:-}" "${3:-}" ;;
+  bandunlock) do_bandunlock ;;
+  netmode)    do_netmode "${2:-}" ;;
+  antenna)    do_antenna "${2:-}" ;;
+  apn)        do_apn "${2:-}" ;;
+  states)     do_states "${2:-list}" "${3:-}" ;;
   schedule)   do_schedule "${2:-show}" "${3:-}" ;;
   cycle)          do_cycle "${2:-}" ;;
   --version|-V)   printf 'zte_mc7500 %s\n' "$VERSION" ;;

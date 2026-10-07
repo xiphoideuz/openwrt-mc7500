@@ -37,5 +37,14 @@
 			"type": "view",
 			"path": "zte_mc7500/settings"
 		}
+	},
+
+	"admin/modem/zte_mc7500/advanced": {
+		"title": "Advanced",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "zte_mc7500/advanced"
+		}
 	}
 }

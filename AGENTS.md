@@ -49,6 +49,26 @@ po/template/zte-mc7500.po                    gettext template (English source)
   `used = month_rx_bytes + month_tx_bytes`, plan `value` is **bytes**,
   `type:2` = data plan, `type:1` = time plan (value in seconds),
   `ratio` = alert percent.
+* Radio policy (Advanced page / `bands`, `bandlock`, … commands):
+  reads come from `zte_nwinfo_api/nwinfo_get_netinfo` (`lte_band` as
+  comma list, `lte_band_lock` as hex mask, `nr5g_sa/nsa/nrdc_band_lock`,
+  `net_select`, `net_select_mode`, `lock_lte/nr_cell`) plus
+  `uci get {config:"zte_nwinfo",section:"odu_as_mode"}` for the antenna
+  and `zwrt_apn_object/getApnAtCid{cid:1}` for the APN (view-only: the
+  modem AES-encrypts the APN password in JS, unreproducible in shell).
+  Writes (all verified with read-back, all invalidate the status cache):
+  `nwinfo_set_lte_ext_band{lte_band}`, `nwinfo_set_sa_bandlock`
+  (`{nr5g_sa_band_lock}` for SA, `{nr5g_band,nr5g_type:"1"}` for NSA),
+  `nwinfo_reset_band_cell_setting{}` (full auto reset),
+  `nwinfo_set_netselect{net_select}` (WL_AND_5G/LTE_AND_5G/Only_5G/Only_LTE),
+  `nwinfo_set_odu_as_mode{odu_as_mode}` (auto/front_directional).
+  **Writes kick the web session** (next call → `-32002`) and may make the
+  modem re-register (link flap); `ubus_auth()` covers the former, confirm
+  modals + read-back cover the latter. Named states live in the flatfile
+  `/etc/zte_mc7500.states` (`name|epoch|lte|sa|nsa|net|ant`), not UCI.
+  (There is also a legacy goform transport — `[{goformId:…}]` POSTed to
+  `/ubus` — but every control above has a pure-ubus setter, so the
+  backend doesn't need it.)
 
 ## Hard constraints (the router is BusyBox ash, not bash)
 
@@ -92,7 +112,11 @@ Smoke tests on the router:
 zte_mc7500 --version
 zte_mc7500 status --json --cache 60 | head -c 200   # uses /etc/config, no env needed
 zte_mc7500 schedule show
+zte_mc7500 bands && zte_mc7500 apn | head -3
+zte_mc7500 states list
 zte_mc7500 connect | disconnect | reconnect   # flaps WAN - warn first
+# radio writes below are no-ops when given current values (safe self-test):
+zte_mc7500 bandlock lte "$(zte_mc7500 bands --json | jsonfilter -e '@.lte_band')"
 ubus call file exec '{"command":"/usr/bin/zte_mc7500","params":["status","--json","--cache","60"]}'
 uci show zte_mc7500
 curl -s -o /dev/null -w '%{http_code}\n' http://172.22.88.1/luci-static/resources/view/zte_mc7500/status.js

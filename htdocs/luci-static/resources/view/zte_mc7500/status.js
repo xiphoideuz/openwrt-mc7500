@@ -113,6 +113,17 @@ function fmtDateTime(ts) {
 	return d.toLocaleString();
 }
 
+function parseJson(res) {
+	if (!res)
+		return null;
+	try {
+		return JSON.parse(typeof res === 'string' ? res : res.stdout);
+	}
+	catch (e) {
+		return null;
+	}
+}
+
 function setText(id, txt) {
 	var el = document.getElementById(id);
 	if (el)
@@ -137,15 +148,15 @@ return view.extend({
 		if (cache > 0)
 			args = args.concat(['--cache', String(cache)]);
 		return L.resolveDefault(fs.exec_direct(BACKEND, args), null).then(function(res) {
-			if (!res)
-				return null;
-			try {
-				return JSON.parse(typeof res === 'string' ? res : res.stdout);
-			}
-			catch (e) {
-				return null;
-			}
+			return parseJson(res);
 		});
+	},
+
+	fetchExtra: function() {
+		return L.resolveDefault(Promise.all([
+			L.resolveDefault(fs.exec_direct(BACKEND, ['bands', '--json']), null).then(parseJson),
+			L.resolveDefault(fs.exec_direct(BACKEND, ['apn', '--json']), null).then(parseJson)
+		]), [null, null]);
 	},
 
 	updateFooter: function(json) {
@@ -175,7 +186,7 @@ return view.extend({
 		}
 	},
 
-	updateView: function(json) {
+	updateView: function(json, extra) {
 		this.updateFooter(json);
 		var banner = document.getElementById('zte-offline');
 		if (!json || !json.radio) {
@@ -255,6 +266,25 @@ return view.extend({
 			fmtBytes(usage.day_rx_bytes), fmtBytes(usage.day_tx_bytes)));
 		setText('zte-month', '%s ↓ / %s ↑'.format(
 			fmtBytes(usage.month_rx_bytes), fmtBytes(usage.month_tx_bytes)));
+
+		/* radio policy block (read-only here; change under Advanced) */
+		var bands = (extra && extra[0]) || null, apn = (extra && extra[1]) || null;
+		if (bands) {
+			setText('zte-pol-lte', '%s (mask %s)'.format(
+				bands.lte_band || _('auto'), bands.lte_band_lock || '?'));
+			setText('zte-pol-nrsa', bands.nr5g_sa_band_lock || _('auto'));
+			setText('zte-pol-nrnsa', bands.nr5g_nsa_band_lock || _('auto'));
+			setText('zte-pol-netmode', '%s (%s)'.format(
+				bands.net_select || '?', bands.net_select_mode || '?'));
+			setText('zte-pol-ant', bands.antenna || '?');
+			setText('zte-pol-ltecell',
+				(bands.lock_lte_cell || '').replace(/\n/g, ' ') || _('none'));
+			setText('zte-pol-nrcell',
+				(bands.lock_nr_cell || '').replace(/\n/g, ' ') || _('none'));
+		}
+		if (apn && apn.profile)
+			setText('zte-pol-apn', '%s / %s (%s)'.format(
+				apn.profile, apn.apn || '?', apn.pdp || '?'));
 
 		/* data plan block, mirrors the ODU "Data Management" page */
 		var planbox = document.getElementById('zte-planbox');
@@ -438,6 +468,16 @@ return view.extend({
 		row2(dataTable, _('Today'), 'zte-day');
 		row2(dataTable, _('This month'), 'zte-month');
 
+		var polTable = E('table', { 'class': 'table' });
+		row2(polTable, _('LTE bands'), 'zte-pol-lte');
+		row2(polTable, _('NR SA bands'), 'zte-pol-nrsa');
+		row2(polTable, _('NR NSA bands'), 'zte-pol-nrnsa');
+		row2(polTable, _('Network mode'), 'zte-pol-netmode');
+		row2(polTable, _('Antenna'), 'zte-pol-ant');
+		row2(polTable, _('LTE cell lock'), 'zte-pol-ltecell');
+		row2(polTable, _('NR cell lock'), 'zte-pol-nrcell');
+		row2(polTable, _('APN'), 'zte-pol-apn');
+
 		var planTable = E('table', { 'class': 'table' });
 		row2(planTable, _('Plan'), 'zte-plan');
 		row2(planTable, _('Counter reset'), 'zte-plan-clear');
@@ -471,6 +511,10 @@ return view.extend({
 			simTable,
 			E('h2', _('Data counters')),
 			dataTable,
+			E('h2', _('Radio policy')),
+			E('p', { 'class': 'cbi-section-descr' },
+				_('Band locks, network mode, antenna and APN. Read-only here — change them under Advanced.')),
+			polTable,
 			E('div', { 'id': 'zte-planbox', 'style': 'display:none' }, [
 				E('h2', _('Data plan')),
 				planTable,
@@ -486,7 +530,9 @@ return view.extend({
 					'class': 'btn cbi-button-action',
 					'click': function() {
 						self.fetchStatus(0).then(function(json) {
-							self.updateView(json);
+							return self.fetchExtra().then(function(extra) {
+								self.updateView(json, extra);
+							});
 						});
 					}
 				}, _('Refresh now')),
@@ -510,7 +556,9 @@ return view.extend({
 		]);
 
 		self.fetchStatus(cfg.cache).then(function(json) {
-			self.updateView(json);
+			return self.fetchExtra().then(function(extra) {
+				self.updateView(json, extra);
+			});
 		});
 
 		poll.add(function() {

@@ -268,3 +268,138 @@ msgstr ""
 
 msgid "How often the status page auto-refreshes. Minimum 5. The last-refresh time is shown at the bottom of the status page."
 msgstr ""
+
+msgid "(none)"
+msgstr ""
+
+msgid "APN"
+msgstr ""
+
+msgid "APN (read-only)"
+msgstr ""
+
+msgid "Advanced settings — Proceed at your own risk"
+msgstr ""
+
+msgid "Antenna"
+msgstr ""
+
+msgid "Auth / user"
+msgstr ""
+
+msgid "Band lock"
+msgstr ""
+
+msgid "Band locks, network mode and antenna changes can drop the mobile connection. Save the working state first, so you can restore it."
+msgstr ""
+
+msgid "Band locks, network mode, antenna and APN. Read-only here — change them under Advanced."
+msgstr ""
+
+msgid "Comma-separated band numbers, e.g. 3,5."
+msgstr ""
+
+msgid "Contents"
+msgstr ""
+
+msgid "Delete"
+msgstr ""
+
+msgid "Delete radio state"
+msgstr ""
+
+msgid "Delete the saved state “%s”?"
+msgstr ""
+
+msgid "Done."
+msgstr ""
+
+msgid "Enter a comma-separated band list, e.g. 3,5."
+msgstr ""
+
+msgid "LTE bands"
+msgstr ""
+
+msgid "LTE cell lock"
+msgstr ""
+
+msgid "Lock %s bands to %s? The connection may drop briefly. A wrong mask can cut service until reset."
+msgstr ""
+
+msgid "Lock radio bands"
+msgstr ""
+
+msgid "NR NSA bands"
+msgstr ""
+
+msgid "NR SA bands"
+msgstr ""
+
+msgid "NR cell lock"
+msgstr ""
+
+msgid "Name"
+msgstr ""
+
+msgid "Network mode"
+msgstr ""
+
+msgid "Network mode / antenna"
+msgstr ""
+
+msgid "No saved states yet."
+msgstr ""
+
+msgid "Profile"
+msgstr ""
+
+msgid "Radio policy"
+msgstr ""
+
+msgid "Reset all band and cell locks to the modem auto state?"
+msgstr ""
+
+msgid "Reset all to auto"
+msgstr ""
+
+msgid "Reset bands"
+msgstr ""
+
+msgid "Restore"
+msgstr ""
+
+msgid "Restore radio state"
+msgstr ""
+
+msgid "Restore the saved state “%s”? The connection may drop briefly."
+msgstr ""
+
+msgid "Save current as…"
+msgstr ""
+
+msgid "Saved states"
+msgstr ""
+
+msgid "Saving radio state…"
+msgstr ""
+
+msgid "Snapshots of the radio policy, kept in a flatfile on the router (%s)."
+msgstr ""
+
+msgid "State name: letters, digits, _ or -."
+msgstr ""
+
+msgid "Switch network mode to %s? The modem will re-register."
+msgstr ""
+
+msgid "Switch the ODU antenna to %s?"
+msgstr ""
+
+msgid "The modem stores the password encrypted; it cannot be shown or changed here."
+msgstr ""
+
+msgid "front directional"
+msgstr ""
+
+msgid "none"
+msgstr ""

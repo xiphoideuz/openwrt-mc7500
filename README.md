@@ -43,6 +43,16 @@ the LuCI page shows.
   materialized as a cron job visible in System → Scheduled Tasks).
 * **Reboot ODU** button with confirmation, plus **Connect / Disconnect /
   Reconnect** buttons for the data session (like the modem homepage button).
+* **Radio policy on the status page** (read-only): LTE/NR band locks,
+  network mode, antenna, cell locks, current APN.
+* **Advanced page** (`Modem → ZTE MC7500 → Advanced`, behind an
+  explicit *"Advanced settings — Proceed at your own risk"* banner):
+  LTE / NR-SA / NR-NSA band lock, network mode (5G/4G auto, NSA, SA,
+  4G-only), ODU antenna (auto / front directional), **named radio states**
+  saved to the flatfile `/etc/zte_mc7500.states` (save / restore /
+  delete), reset-all-to-auto, and the APN profile (read-only — the modem
+  stores its password AES-encrypted, so it can only be changed in the
+  modem's own UI).
 * **CLI backend** `/usr/bin/zte_mc7500` (also usable over SSH):
 
 ```sh
@@ -56,6 +66,17 @@ zte_mc7500 restart                    # reboot the ODU
 zte_mc7500 schedule                   # show scheduled reboot
 zte_mc7500 schedule 04:00            # daily reboot at 04:00
 zte_mc7500 schedule off              # disable scheduled reboot
+zte_mc7500 bands                      # radio policy (locks, mode, antenna)
+zte_mc7500 bands --json
+zte_mc7500 bandlock lte 3,5           # lock bands (ADVANCED - may drop link)
+zte_mc7500 bandunlock                 # reset locks to modem auto (ADVANCED)
+zte_mc7500 netmode                     # show network mode
+zte_mc7500 netmode Only_LTE           # 4G only (ADVANCED)
+zte_mc7500 antenna                     # show ODU antenna
+zte_mc7500 apn                         # current APN profile (read-only)
+zte_mc7500 states save home           # snapshot radio state to flatfile
+zte_mc7500 states restore home
+zte_mc7500 states list
 zte_mc7500 cycle 3600                # status + reboot every hour
 zte_mc7500 --version
 ```
@@ -77,8 +98,30 @@ The bottom-left footer always tells you the truth:
 it shows the last attempt time and an error banner. So: values are fresh
 to within roughly `cache` seconds, never second-by-second realtime.
 
-## Scheduled reboot
+## Advanced radio controls
 
+The **Advanced** page (and matching CLI commands) mirror the modem's own
+developer-options page:
+
+* **Band lock**: comma-separated band lists, e.g. `bandlock lte 3,5`.
+  The modem validates; a wrong mask can cut service until reset.
+* **Network mode**: `WL_AND_5G` (5G/4G auto), `LTE_AND_5G` (5G NSA),
+  `Only_5G` (5G SA), `Only_LTE` (4G only). The modem re-registers, so the
+  link (and this SSH session, if it rides the mobile link) may flap.
+* **Antenna**: `auto` or `front_directional`.
+* **Saved states**: named snapshots of bands + mode + antenna in the
+  flatfile `/etc/zte_mc7500.states` (one `name|epoch|…` line per state,
+  deliberately *not* UCI). Workflow: `states save working` → experiment →
+  `states restore working` (or `bandunlock` for full modem-auto reset).
+* **APN**: shown read-only. Edits stay in the modem UI because it
+  AES-encrypts the password in JavaScript, which a shell backend cannot
+  reproduce.
+
+Every setter is verified with a read-back, and every write invalidates
+the status cache. Writes may invalidate the modem web session; the
+backend re-logs in and retries transparently.
+
+## Scheduled reboot
 Set it from the Configuration page (Save & Apply, then *Apply schedule*),
 or from the CLI (`zte_mc7500 schedule 04:00`). Either way the result is a
 marked cron block in `/etc/crontabs/root`, therefore visible and editable
