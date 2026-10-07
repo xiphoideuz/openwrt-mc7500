@@ -7,10 +7,10 @@
 
 /*
 	luci-app-zte-mc7500 - LuCI interface for the ZTE MC7500 5G ODU.
-	Status view. Structure inspired by 4IceG/luci-app-3ginfo-lite (GPL-3.0),
+	Status view. Structure inspired by 4IceG/luci-app-3ginfo-lite (PolyForm Noncommercial License 1.0.0),
 	backend is the bundled /usr/bin/zte_mc7500 (ubus JSON-RPC to the ODU).
 
-	Copyright 2026, licensed under GPL-3.0, see LICENSE.
+	Copyright 2026, licensed under PolyForm Noncommercial License 1.0.0, see LICENSE.
 */
 
 var BACKEND = '/usr/bin/zte_mc7500';

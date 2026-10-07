@@ -234,4 +234,4 @@ See [AGENTS.md](AGENTS.md) for architecture notes, target constraints
 
 ## License
 
-GPL-3.0, see [LICENSE](LICENSE).
+PolyForm Noncommercial License 1.0.0, see [LICENSE](LICENSE).

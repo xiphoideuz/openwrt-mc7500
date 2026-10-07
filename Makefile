@@ -1,7 +1,5 @@
 #
-# Copyright 2026 - luci-app-zte-mc7500
-#
-# Licensed to the GNU General Public License v3.0.
+# Licensed to the PolyForm Noncommercial License v1.0.0.
 #
 
 include $(TOPDIR)/rules.mk
