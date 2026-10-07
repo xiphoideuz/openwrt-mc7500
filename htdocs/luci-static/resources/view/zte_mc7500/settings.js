@@ -76,21 +76,23 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Button, '_sched_apply', _('Schedule'),
-			_('Writes the cron job from the settings above. ' +
-			  'Save & Apply first, then press this button.'));
+			_('Saves this page, then writes the cron job from the settings above.'));
 		o.inputstyle = 'action';
 		o.inputtitle = _('Apply schedule');
 		o.onclick = function(ev) {
-			ui.showModal(_('Applying schedule…'), [
-				E('p', { 'class': 'spinning' }, _('Updating Scheduled Tasks…'))
-			]);
-			return L.resolveDefault(fs.exec_direct(BACKEND,
-				['schedule', 'apply']), null).then(function() {
-				ui.hideModal();
+			/* save the form first, so the cron job reflects the fields above */
+			return m.save().then(function() {
+				ui.showModal(_('Applying schedule…'), [
+					E('p', { 'class': 'spinning' }, _('Updating Scheduled Tasks…'))
+				]);
 				return L.resolveDefault(fs.exec_direct(BACKEND,
-					['schedule', 'show']), null).then(function(res) {
-					ui.addNotification(null, E('pre', {},
-						(res || '').trim() || _('Schedule applied.')), 'info');
+					['schedule', 'apply']), null).then(function() {
+					ui.hideModal();
+					return L.resolveDefault(fs.exec_direct(BACKEND,
+						['schedule', 'show']), null).then(function(res) {
+						ui.addNotification(null, E('pre', {},
+							(res || '').trim() || _('Schedule applied.')), 'info');
+					});
 				});
 			});
 		};

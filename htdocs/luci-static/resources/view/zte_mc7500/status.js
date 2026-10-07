@@ -478,7 +478,8 @@ return view.extend({
 			]),
 			E('div', { 'id': 'zte-footer', 'style': 'display:flex;justify-content:space-between;flex-wrap:wrap;font-size:85%;color:#666;margin:6px 0;' }, [
 				E('span', { 'id': 'zte-lastrefresh' }, _('Last refresh: %s').format('–')),
-				E('span', { 'id': 'zte-autorefresh' }, '')
+				E('span', { 'id': 'zte-autorefresh' },
+					_('Auto-refresh every %ss (cache %ss)').format(cfg.refresh, cfg.cache))
 			]),
 			E('div', { 'class': 'cbi-page-actions' }, [
 				E('button', {
@@ -507,9 +508,6 @@ return view.extend({
 				}, _('Reboot ODU'))
 			])
 		]);
-
-		setText('zte-autorefresh',
-			_('Auto-refresh every %ss (cache %ss)').format(cfg.refresh, cfg.cache));
 
 		self.fetchStatus(cfg.cache).then(function(json) {
 			self.updateView(json);

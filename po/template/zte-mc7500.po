@@ -236,7 +236,7 @@ msgstr ""
 msgid "Updating Scheduled Tasks…"
 msgstr ""
 
-msgid "Writes the cron job from the settings above. Save & Apply first, then press this button."
+msgid "Saves this page, then writes the cron job from the settings above."
 msgstr ""
 
 msgid "connected"
