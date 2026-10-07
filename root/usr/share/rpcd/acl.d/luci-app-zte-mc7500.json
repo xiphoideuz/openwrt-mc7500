@@ -1,0 +1,18 @@
+{
+	"luci-app-zte-mc7500": {
+		"description": "Grant access to ZTE MC7500 status app",
+		"read": {
+			"cgi-io": [ "exec" ],
+			"file": {
+				"/usr/bin/zte_mc7500": [ "exec" ]
+			},
+			"uci": [ "zte_mc7500" ]
+		},
+		"write": {
+			"file": {
+				"/usr/bin/zte_mc7500": [ "exec" ]
+			},
+			"uci": [ "zte_mc7500" ]
+		}
+	}
+}

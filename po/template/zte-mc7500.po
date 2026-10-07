@@ -1,0 +1,176 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8"
+
+msgid "ZTE MC7500"
+msgstr ""
+
+msgid "Status"
+msgstr ""
+
+msgid "Configuration"
+msgstr ""
+
+msgid "ZTE MC7500 Settings"
+msgstr ""
+
+msgid "Connection settings for the ZTE MC7500 outdoor unit. The password is stored on the router and only used for the modem web API login."
+msgstr ""
+
+msgid "Modem IP address"
+msgstr ""
+
+msgid "Address of the ZTE MC7500 web interface."
+msgstr ""
+
+msgid "Modem username"
+msgstr ""
+
+msgid "Web interface username (case sensitive, usually \"Admin\")."
+msgstr ""
+
+msgid "Modem password"
+msgstr ""
+
+msgid "Web interface password."
+msgstr ""
+
+msgid "Page refresh (seconds)"
+msgstr ""
+
+msgid "How often the status page polls the modem. Minimum 5."
+msgstr ""
+
+msgid "Backend cache (seconds)"
+msgstr ""
+
+msgid "The status backend answers from cache while it is younger than this. Protects the modem from too frequent logins. 0 disables the cache."
+msgstr ""
+
+msgid "Connection"
+msgstr ""
+
+msgid "WAN mode"
+msgstr ""
+
+msgid "WAN status"
+msgstr ""
+
+msgid "IPv4"
+msgstr ""
+
+msgid "IPv6"
+msgstr ""
+
+msgid "ODU uptime"
+msgstr ""
+
+msgid "Radio"
+msgstr ""
+
+msgid "Provider"
+msgstr ""
+
+msgid "Technology"
+msgstr ""
+
+msgid "signal"
+msgstr ""
+
+msgid "LTE cell"
+msgstr ""
+
+msgid "LTE RSRP / RSRQ / RSSI / SNR"
+msgstr ""
+
+msgid "NR cell"
+msgstr ""
+
+msgid "NR RSRP / RSRQ / RSSI / SNR"
+msgstr ""
+
+msgid "SIM"
+msgstr ""
+
+msgid "SIM state"
+msgstr ""
+
+msgid "slot"
+msgstr ""
+
+msgid "ICCID"
+msgstr ""
+
+msgid "IMSI"
+msgstr ""
+
+msgid "MSISDN"
+msgstr ""
+
+msgid "Data counters"
+msgstr ""
+
+msgid "Session"
+msgstr ""
+
+msgid "Speed now"
+msgstr ""
+
+msgid "Today"
+msgstr ""
+
+msgid "This month"
+msgstr ""
+
+msgid "Data plan"
+msgstr ""
+
+msgid "data"
+msgstr ""
+
+msgid "Plan"
+msgstr ""
+
+msgid "Counter reset"
+msgstr ""
+
+msgid "auto-clears on day %s"
+msgstr ""
+
+msgid "Used"
+msgstr ""
+
+msgid "Remaining"
+msgstr ""
+
+msgid "Alert at"
+msgstr ""
+
+msgid "Data usage has reached the alert threshold!"
+msgstr ""
+
+msgid "Refresh now"
+msgstr ""
+
+msgid "Reboot ODU"
+msgstr ""
+
+msgid "Reboot ZTE MC7500"
+msgstr ""
+
+msgid "Really reboot the outdoor unit? The mobile connection will be down for a few minutes."
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Reboot"
+msgstr ""
+
+msgid "Rebooting…"
+msgstr ""
+
+msgid "Reboot command sent. Waiting for the ODU to come back…"
+msgstr ""
+
+msgid "Cannot reach the ZTE MC7500. Check the IP address, credentials and cabling."
+msgstr ""

@@ -1,0 +1,460 @@
+#!/bin/sh
+# zte_mc7500.sh - ZTE MC7500 ODU status & restart tool for OpenWRT (ash)
+#
+# Talks to the ZTE MC7500 web UI (ubus JSON-RPC) at 192.168.254.1:
+#   1. POST zwrt_web/web_login_info  -> zte_web_sault (+ webtoken cookie)
+#   2. password = SHA256( SHA256(pass) + sault )  (uppercase hex)
+#   3. POST zwrt_web/web_login {username,password} -> ubus_rpc_session (stok)
+#   4. Authenticated calls with stok + "Z-Mode: 1" header
+#   5. POST zwrt_web/web_logout
+#
+# Deps on OpenWRT: curl, sha256sum, jsonfilter, awk, sed, tr
+# Usage:
+#   zte_mc7500.sh status [--json]   show modem status (3ginfo-style)
+#   zte_mc7500.sh restart           reboot the ODU
+#   zte_mc7500.sh cycle <seconds>   status + reboot every N seconds
+#
+# Config via env (or edit defaults below):
+#   ZTE_IP ZTE_USER ZTE_PASS
+
+ZTE_IP="${ZTE_IP:-}"
+ZTE_USER="${ZTE_USER:-}"
+ZTE_PASS="${ZTE_PASS:-}"
+
+# UCI config (when running on OpenWRT with luci-app-zte-mc7500 installed).
+# Precedence: environment > UCI > built-in default.
+_uci_get() {
+  command -v uci >/dev/null 2>&1 && uci -q get "zte_mc7500.main.$1" 2>/dev/null
+}
+[ -n "$ZTE_IP" ]   || ZTE_IP="$(_uci_get ip)"
+[ -n "$ZTE_USER" ] || ZTE_USER="$(_uci_get user)"
+[ -n "$ZTE_PASS" ] || ZTE_PASS="$(_uci_get password)"
+[ -n "$ZTE_IP" ]   || ZTE_IP="192.168.254.1"
+[ -n "$ZTE_USER" ] || ZTE_USER="Admin"
+[ -n "$ZTE_PASS" ] || ZTE_PASS="W72L54WV"
+BASE="https://${ZTE_IP}"
+UA="Mozilla/5.0 (X11; Linux aarch64) zte_mc7500/1.0"
+CTIMEOUT=8
+ZERO="00000000000000000000000000000000"
+
+CJ=""      # cookie jar
+STOK=""    # session token
+REQ_ID=0
+DEBUG=0
+
+log()  { printf '%s\n' "$*" >&2; }
+dbg()  { [ "$DEBUG" = "1" ] && printf '[debug] %s\n' "$*" >&2; }
+die()  { printf 'Error: %s\n' "$*" >&2; cleanup; exit 1; }
+
+cleanup() {
+  [ -n "$CJ" ] && [ -f "$CJ" ] && rm -f "$CJ"
+}
+trap 'cleanup' EXIT INT TERM
+
+need_tools() {
+  for t in curl sha256sum jsonfilter awk sed tr; do
+    command -v "$t" >/dev/null 2>&1 || die "missing tool: $t"
+  done
+}
+
+# ubus <object> <method> <args-json> <ztag> [zmode]
+# prints raw response body on stdout
+ubus() {
+  _obj="$1"; _mtd="$2"; _args="$3"; _tag="$4"; _mode="${5:-1}"
+  REQ_ID=$((REQ_ID + 1))
+  _ts="$(date +%s)000"
+  _body='[{"jsonrpc":"2.0","id":'"$REQ_ID"',"method":"call","params":["'"$STOK"'","'"$_obj"'","'"$_mtd"'",'"$_args"']}]'
+  dbg "POST /ubus $_obj/$_mtd (id=$REQ_ID mode=$_mode tag=$_tag)"
+  dbg "$_body"
+  curl -sk -m "$CTIMEOUT" -c "$CJ" -b "$CJ" \
+    -A "$UA" \
+    -X POST "${BASE}/ubus/?t=${_ts}" \
+    -H "Content-Type: application/json" \
+    -H "Z-Mode: $_mode" \
+    -H "Z-Tag: $_tag" \
+    -H "Referer: ${BASE}/" \
+    -H "Origin: $BASE" \
+    -H "X-Requested-With: XMLHttpRequest" \
+    --data-binary "$_body" 2>/dev/null
+}
+
+# jsonfield <response> <jsonfilter-expr>  (quiet, empty on error)
+jf() {
+  printf '%s' "$1" | jsonfilter -q -e "$2" 2>/dev/null
+}
+
+sha256up() {
+  # stdin -> UPPERCASE hex sha256 (matches modem JS: "0123456789ABCDEF")
+  sha256sum | awk '{print $1}' | tr 'a-f' 'A-F'
+}
+
+zte_login() {
+  CJ="$(mktemp /tmp/zte_mc7500.ck.XXXXXX)" || die "mktemp failed"
+  STOK="$ZERO"
+
+  _r="$(ubus "zwrt_web" "web_login_info" "{}" "web_login_info" "0")" \
+    || die "no response from modem at $BASE"
+  dbg "login_info: $_r"
+  _sault="$(jf "$_r" '@[0].result[1].zte_web_sault')"
+  [ -n "$_sault" ] || die "login_info failed (no sault). Got: $(printf '%.200s' "$_r")"
+  _fails="$(jf "$_r" '@[0].result[1].login_fail_num')"
+  _lock="$(jf "$_r" '@[0].result[1].login_fail_lock_lefttime')"
+  dbg "sault=$_sault fails=${_fails:-?} lock=${_lock:-?}"
+  if [ -n "$_lock" ] && [ "$_lock" != "0" ]; then
+    die "modem login locked, try again in ${_lock}s"
+  fi
+
+  _inner="$(printf '%s' "$ZTE_PASS" | sha256up)"
+  _outer="$(printf '%s' "${_inner}${_sault}" | sha256up)"
+  _args='{"username":"'"$ZTE_USER"'","password":"'"$_outer"'"}'
+
+  _r2="$(ubus "zwrt_web" "web_login" "$_args" "web_login" "0")" \
+    || die "no response to web_login"
+  dbg "login: $_r2"
+  _rc="$(jf "$_r2" '@[0].result[1].result')"
+  if [ "$_rc" = "0" ]; then
+    STOK="$(jf "$_r2" '@[0].result[1].ubus_rpc_session')"
+    [ -n "$STOK" ] || die "login ok but no session token"
+    dbg "STOK=$STOK"
+  else
+    die "login failed as $ZTE_USER (result=${_rc:-?}). Check user/password."
+  fi
+}
+
+zte_logout() {
+  [ -n "$STOK" ] && [ "$STOK" != "$ZERO" ] || return 0
+  ubus "zwrt_web" "web_logout" "{}" "web_logout" >/dev/null 2>&1
+  STOK="$ZERO"
+}
+
+fmt_bytes() {
+  # bytes -> human
+  awk -v b="${1:-0}" 'BEGIN{
+    if (b>=1099511627776) printf "%.2f TB", b/1099511627776;
+    else if (b>=1073741824) printf "%.2f GB", b/1073741824;
+    else if (b>=1048576) printf "%.2f MB", b/1048576;
+    else if (b>=1024) printf "%.1f KB", b/1024;
+    else printf "%d B", b}'
+}
+
+fmt_dur() {
+  awk -v s="${1:-0}" 'BEGIN{d=int(s/86400);h=int(s%86400/3600);m=int(s%3600/60);sec=int(s%60);
+    if (d>0) printf "%dd %dh %dm", d,h,m; else if (h>0) printf "%dh %dm %ds", h,m,sec;
+    else if (m>0) printf "%dm %ds", m,sec; else printf "%ds", sec}'
+}
+
+fmt_rate() {
+  # B/s -> human bit/s
+  awk -v b="${1:-0}" 'BEGIN{bps=b*8;
+    if (bps>=1000000000) printf "%.2f Gbps", bps/1000000000;
+    else if (bps>=1000000) printf "%.2f Mbps", bps/1000000;
+    else if (bps>=1000) printf "%.1f Kbps", bps/1000;
+    else printf "%d bps", bps}'
+}
+
+pct_of() {
+  # pct_of <part> <whole> -> percent with 1 decimal (0.0 if whole==0)
+  awk -v p="${1:-0}" -v w="${2:-0}" 'BEGIN{
+    if (w<=0) printf "0.0"; else printf "%.1f", p*100/w}'
+}
+
+usage_bar() {
+  # usage_bar <percent> [width] -> e.g. [======------]
+  _p="${1:-0}"; _w="${2:-20}"
+  _fill="$(awk -v p="$_p" -v w="$_w" 'BEGIN{f=int(p*w/100+0.5); if(f>w)f=w; if(f<0)f=0; print f}')"
+  _i=0; _bar=""
+  while [ "$_i" -lt "$_w" ]; do
+    _i=$((_i + 1))
+    if [ "$_i" -le "$_fill" ]; then _bar="${_bar}="; else _bar="${_bar}-"; fi
+  done
+  printf '[%s]' "$_bar"
+}
+
+sig_label() {
+  # crude quality label from RSRP
+  awk -v r="${1:-}" 'BEGIN{
+    if (r=="") {print "-"; exit}
+    if (r>=-80) print "excellent"; else if (r>=-90) print "good";
+    else if (r>=-100) print "fair"; else print "poor"}'
+}
+
+do_status() {
+  _json="$1"
+  # serve a fresh cache without touching the modem (used by the LuCI view)
+  if [ "$_json" = "1" ] && [ "$CACHE_SECS" -gt 0 ] 2>/dev/null && \
+     [ -f "$CACHE_FILE" ] && [ -f "$CACHE_FILE.ts" ]; then
+    _mtime="$(cat "$CACHE_FILE.ts" 2>/dev/null || echo 0)"
+    case "$_mtime" in ''|*[!0-9]*) _mtime=0 ;; esac
+    if [ $(( $(date +%s) - _mtime )) -lt "$CACHE_SECS" ]; then
+      cat "$CACHE_FILE"
+      return 0
+    fi
+  fi
+  zte_login
+
+  _status="$(ubus "zwrt_router.api" "router_get_status" "{}" "router_get_status")"
+  _net="$(ubus "zte_nwinfo_api" "nwinfo_get_netinfo" "{}" "nwinfo_get_netinfo")"
+  _sim="$(ubus "zwrt_zte_mdm.api" "get_sim_info" "{}" "get_sim_info")"
+  _iface="$(ubus "zwrt_data" "get_wwaniface" '{"source_module":"web","cid":1,"connect_status":""}' "get_wwaniface")"
+  _dst="$(ubus "zwrt_data" "get_wwandst" '{"source_module":"web","cid":1,"type":4}' "get_wwandst")"
+  _dev="$(ubus "zwrt_mc.device.manager" "get_device_info" "{}" "get_device_info")"
+  _lim="$(ubus "zwrt_data" "get_wwandst_monthlimit" '{"source_module":"web","cid":1}' "get_wwandst_monthlimit")"
+  _clr="$(ubus "zwrt_data" "get_wwandst_clearday" '{"source_module":"web","cid":1}' "get_wwandst_clearday")"
+
+  if [ "$_json" = "1" ]; then
+    _out="$(printf '{"meta":{"ip":"%s"},"wan":%s,"radio":%s,"sim":%s,"iface":%s,"usage":%s,"device":%s,"plan":%s,"clearday":%s}\n' \
+      "$ZTE_IP" \
+      "$(printf '%s' "$_status" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')" \
+      "$(printf '%s' "$_net" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')" \
+      "$(printf '%s' "$_sim" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')" \
+      "$(printf '%s' "$_iface" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')" \
+      "$(printf '%s' "$_dst" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')" \
+      "$(printf '%s' "$_dev" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')" \
+      "$(printf '%s' "$_lim" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')" \
+      "$(printf '%s' "$_clr" | jsonfilter -q -e '@[0].result[1]' 2>/dev/null || printf 'null')"
+    )"
+    # sanity: all endpoints must have answered
+    case "$_out" in
+      *'"wan":null'*|*'"radio":null'*) die "modem query failed" ;;
+    esac
+    if [ "$CACHE_SECS" -gt 0 ] 2>/dev/null; then
+      printf '%s' "$_out" > "$CACHE_FILE" 2>/dev/null
+      date +%s > "$CACHE_FILE.ts" 2>/dev/null
+    fi
+    printf '%s' "$_out"
+    zte_logout
+    return 0
+  fi
+
+  # --- human-readable, 3ginfo-style ---
+  _wan_stat="$(jf "$_status" '@[0].result[1].current_wan_status')"
+  _opms="$(jf "$_status" '@[0].result[1].opms_wan_mode')"
+  _opms_auto="$(jf "$_status" '@[0].result[1].opms_wan_auto_mode')"
+  _conn="$(jf "$_iface" '@[0].result[1].connect_status')"
+  _v4="$(jf "$_iface" '@[0].result[1].ipv4_address')"
+  _v4gw="$(jf "$_iface" '@[0].result[1].ipv4_gateway')"
+  _v6="$(jf "$_iface" '@[0].result[1].ipv6_address')"
+  _fails_c="$(jf "$_iface" '@[0].result[1].connect_fail_count')"
+
+  _ntype="$(jf "$_net" '@[0].result[1].network_type')"
+  _bars="$(jf "$_net" '@[0].result[1].signalbar')"
+  _prov="$(jf "$_net" '@[0].result[1].network_provider_fullname')"
+  _roam="$(jf "$_net" '@[0].result[1].simcard_roam')"
+  _lband="$(jf "$_net" '@[0].result[1].wan_active_band')"
+  _lchan="$(jf "$_net" '@[0].result[1].wan_active_channel')"
+  _lpci="$(jf "$_net" '@[0].result[1].lte_pci')"
+  _cell="$(jf "$_net" '@[0].result[1].cell_id')"
+  _lac="$(jf "$_net" '@[0].result[1].lac_code')"
+  _lrsrp="$(jf "$_net" '@[0].result[1].lte_rsrp')"
+  _lrsrq="$(jf "$_net" '@[0].result[1].lte_rsrq')"
+  _lrssi="$(jf "$_net" '@[0].result[1].lte_rssi')"
+  _lsnr="$(jf "$_net" '@[0].result[1].lte_snr')"
+  _nband="$(jf "$_net" '@[0].result[1].nr5g_action_band')"
+  _nchan="$(jf "$_net" '@[0].result[1].nr5g_action_channel')"
+  _npci="$(jf "$_net" '@[0].result[1].nr5g_pci')"
+  _nrsrp="$(jf "$_net" '@[0].result[1].nr5g_rsrp')"
+  _nrsrq="$(jf "$_net" '@[0].result[1].nr5g_rsrq')"
+  _nrssi="$(jf "$_net" '@[0].result[1].nr5g_rssi')"
+  _nsnr="$(jf "$_net" '@[0].result[1].nr5g_snr')"
+  _ncell="$(jf "$_net" '@[0].result[1].nr5g_cell_id')"
+  _nbw="$(jf "$_net" '@[0].result[1].nr5g_bandwidth')"
+
+  _simst="$(jf "$_sim" '@[0].result[1].sim_states')"
+  _iccid="$(jf "$_sim" '@[0].result[1].sim_iccid')"
+  _imsi="$(jf "$_sim" '@[0].result[1].sim_imsi')"
+  _msisdn="$(jf "$_sim" '@[0].result[1].msisdn')"
+  _modemst="$(jf "$_sim" '@[0].result[1].modem_main_state')"
+  _slot="$(jf "$_sim" '@[0].result[1].current_sim_slot')"
+
+  _rx="$(jf "$_dst" '@[0].result[1].real_rx_bytes')"
+  _tx="$(jf "$_dst" '@[0].result[1].real_tx_bytes')"
+  _rxsp="$(jf "$_dst" '@[0].result[1].real_rx_speed')"
+  _txsp="$(jf "$_dst" '@[0].result[1].real_tx_speed')"
+  _sess="$(jf "$_dst" '@[0].result[1].real_time')"
+  _mrx="$(jf "$_dst" '@[0].result[1].month_rx_bytes')"
+  _mtx="$(jf "$_dst" '@[0].result[1].month_tx_bytes')"
+  _drx="$(jf "$_dst" '@[0].result[1].day_rx_bytes')"
+  _dtx="$(jf "$_dst" '@[0].result[1].day_tx_bytes')"
+
+  _up="$(jf "$_dev" '@[0].result[1].device_uptime')"
+  _rsched="$(jf "$_dev" '@[0].result[1].reboot_schedule_enable')"
+
+  # --- data plan (same source as the web UI "Data Management" page) ---
+  _pl_en="$(jf "$_lim" '@[0].result[1].enable')"
+  _pl_type="$(jf "$_lim" '@[0].result[1].type')"
+  _pl_val="$(jf "$_lim" '@[0].result[1].value')"
+  _pl_ratio="$(jf "$_lim" '@[0].result[1].ratio')"
+  _clr_en="$(jf "$_clr" '@[0].result[1].enable')"
+  _clr_day="$(jf "$_clr" '@[0].result[1].clearday')"
+
+  printf '=== ZTE MC7500 @ %s ===\n' "$ZTE_IP"
+  printf 'WAN mode      : %s (auto: %s)\n' "${_opms:-?}" "${_opms_auto:-?}"
+  printf 'WAN status    : %s / %s\n' "${_wan_stat:-?}" "${_conn:-?}"
+  printf 'IPv4          : %s gw %s\n' "${_v4:-?}" "${_v4gw:-?}"
+  printf 'IPv6          : %s\n' "${_v6:-?}"
+  printf 'Uptime (ODU)  : %s   modem-sched-reboot: %s\n' "$(fmt_dur "${_up:-0}")" "${_rsched:-?}"
+  printf -- '--- Radio ---\n'
+  printf 'Provider      : %s (%s)\n' "${_prov:-?}" "${_roam:-?}"
+  printf 'Tech / signal : %s  bars %s/5\n' "${_ntype:-?}" "${_bars:-?}"
+  printf 'LTE           : %s ch %s pci %s cell %s lac %s\n' \
+    "${_lband:-?}" "${_lchan:-?}" "${_lpci:-?}" "${_cell:-?}" "${_lac:-?}"
+  printf '  RSRP %-6s RSRQ %-6s RSSI %-6s SNR %-6s (%s)\n' \
+    "${_lrsrp:-?}dBm" "${_lrsrq:-?}dB" "${_lrssi:-?}dBm" "${_lsnr:-?}dB" "$(sig_label "$_lrsrp")"
+  if [ -n "$_nband" ]; then
+    printf 'NR5G          : n%s ch %s pci %s cell %s bw %sMHz\n' \
+      "${_nband:-?}" "${_nchan:-?}" "${_npci:-?}" "${_ncell:-?}" "${_nbw:-?}"
+    printf '  RSRP %-6s RSRQ %-6s RSSI %-6s SNR %-6s (%s)\n' \
+      "${_nrsrp:-?}dBm" "${_nrsrq:-?}dB" "${_nrssi:-?}dBm" "${_nsnr:-?}dB" "$(sig_label "$_nrsrp")"
+  fi
+  printf -- '--- SIM ---\n'
+  printf 'State         : %s / %s (slot %s)\n' "${_simst:-?}" "${_modemst:-?}" "${_slot:-?}"
+  printf 'ICCID         : %s\n' "${_iccid:-?}"
+  printf 'IMSI          : %s\n' "${_imsi:-?}"
+  printf 'MSISDN        : %s\n' "${_msisdn:-?}"
+  printf -- '--- Data ---\n'
+  printf 'Session       : down %s up %s  (%s)\n' \
+    "$(fmt_bytes "${_rx:-0}")" "$(fmt_bytes "${_tx:-0}")" "$(fmt_dur "${_sess:-0}")"
+  printf 'Speed now     : down %s up %s\n' \
+    "$(fmt_rate "${_rxsp:-0}")" "$(fmt_rate "${_txsp:-0}")"
+  printf 'Today         : down %s up %s\n' \
+    "$(fmt_bytes "${_drx:-0}")" "$(fmt_bytes "${_dtx:-0}")"
+  printf 'This month    : down %s up %s\n' \
+    "$(fmt_bytes "${_mrx:-0}")" "$(fmt_bytes "${_mtx:-0}")"
+  [ -n "$_fails_c" ] && [ "$_fails_c" != "0" ] && printf 'Connect fails   : %s\n' "$_fails_c"
+  # --- data plan vs usage, mirrors the web UI "Data Management" page ---
+  if [ "$_pl_en" = "1" ]; then
+    if [ "$_clr_en" = "1" ] && [ -n "$_clr_day" ]; then
+      printf -- '--- Data plan (auto-clears on day %s) ---\n' "$_clr_day"
+    else
+      printf -- '--- Data plan ---\n'
+    fi
+    if [ "$_pl_type" = "2" ]; then
+      # data plan: value is bytes, used = rx+tx this month
+      _used="$(awk -v a="${_mrx:-0}" -v b="${_mtx:-0}" 'BEGIN{printf "%.0f", a+b}')"
+      _plan="${_pl_val:-0}"
+      _pct="$(pct_of "$_used" "$_plan")"
+      _remain="$(awk -v p="$_plan" -v u="$_used" 'BEGIN{r=p-u; if(r<0)r=0; printf "%.0f", r}')"
+      printf 'Plan          : %s (data)\n' "$(fmt_bytes "$_plan")"
+      printf 'Used          : %s / %s (%s%%) %s\n' \
+        "$(fmt_bytes "$_used")" "$(fmt_bytes "$_plan")" "$_pct" "$(usage_bar "$_pct")"
+      printf 'Remaining     : %s\n' "$(fmt_bytes "$_remain")"
+      if [ -n "$_pl_ratio" ] && [ "$_pl_ratio" != "0" ]; then
+        _thr="$(awk -v p="$_plan" -v r="$_pl_ratio" 'BEGIN{printf "%.0f", p*r/100}')"
+        printf 'Alert at      : %s%% (%s)\n' "$_pl_ratio" "$(fmt_bytes "$_thr")"
+        _over="$(awk -v p="$_pct" -v r="$_pl_ratio" 'BEGIN{print (p>=r)}')"
+        [ "$_over" = "1" ] && printf 'ALERT         : usage %s%% has reached the %s%% threshold!\n' "$_pct" "$_pl_ratio"
+      fi
+    elif [ "$_pl_type" = "1" ]; then
+      # time plan: value is seconds
+      _used_t="$(jf "$_dst" '@[0].result[1].month_time')"
+      _plan_h="$(awk -v v="${_pl_val:-0}" 'BEGIN{printf "%.1f", v/3600}')"
+      printf 'Plan          : %s hours (time)\n' "$_plan_h"
+      printf 'Used          : %s / %s hours (%s%%)\n' \
+        "$(awk -v s="${_used_t:-0}" 'BEGIN{printf "%.1f", s/3600}')" \
+        "$_plan_h" "$(pct_of "${_used_t:-0}" "${_pl_val:-0}")"
+      [ -n "$_pl_ratio" ] && [ "$_pl_ratio" != "0" ] && \
+        printf 'Alert at      : %s%%\n' "$_pl_ratio"
+    else
+      printf 'Plan          : enabled, unknown type (%s)\n' "${_pl_type:-?}"
+    fi
+  else
+    printf -- '--- Data plan (disabled) ---\n'
+  fi
+
+  zte_logout
+}
+
+do_restart() {
+  zte_login
+  printf 'Sending reboot to ZTE MC7500...\n'
+  _r="$(ubus "zwrt_mc.device.manager" "device_reboot" '{"moduleName":"web"}' "device_reboot")"
+  dbg "reboot: $_r"
+  _rc="$(printf '%s' "$_r" | jsonfilter -q -e '@[0].result[0]' 2>/dev/null)"
+  # success = result[0] == 0 ; the manager returns d() => {result:success/fail}
+  if [ "$_rc" = "0" ]; then
+    printf 'Reboot command accepted. ODU will drop for ~1-2 min.\n'
+  else
+    printf 'Reboot response: %.300s\n' "$_r"
+    printf 'Note: result code was "%s" (0 = ok).\n' "${_rc:-?}"
+  fi
+  # session dies with the reboot; skip logout
+  STOK="$ZERO"
+}
+
+do_cycle() {
+  _secs="$1"
+  case "$_secs" in ''|*[!0-9]*) die "cycle needs seconds, e.g. $0 cycle 3600" ;; esac
+  [ "$_secs" -ge 10 ] || die "cycle minimum is 10s (modem needs time to come back)"
+  printf 'Cycle mode: status + reboot every %ss. Ctrl+C to stop.\n' "$_secs"
+  while :; do
+    printf '\n--- %s ---\n' "$(date '+%F %T')"
+    do_status 0
+    do_restart
+    printf 'Sleeping %ss...\n' "$_secs"
+    sleep "$_secs"
+  done
+}
+
+usage() {
+  cat <<'EOF'
+Usage: zte_mc7500.sh [--debug] <cmd> [args]
+  status [--json] [--cache N]
+                login + show ODU status (3ginfo-style);
+                --json prints machine-readable JSON,
+                --cache N reuses a cached reply younger than N seconds
+  restart           login + reboot the ODU
+  cycle <seconds>   status + reboot every N seconds (min 10)
+
+Environment (all optional, defaults shown):
+  ZTE_IP    modem address   (default: 192.168.254.1)
+  ZTE_USER  web username    (default: Admin - case sensitive)
+  ZTE_PASS  web password    (default: W72L54WV)
+
+  Set them for one run:
+    ZTE_IP=192.168.254.1 ZTE_USER=Admin ZTE_PASS=secret zte_mc7500.sh status
+
+  Or export them for the whole shell session:
+    export ZTE_IP=192.168.254.1
+    export ZTE_USER=Admin
+    export ZTE_PASS=secret
+    zte_mc7500.sh status
+
+  Or persist them in /etc/profile.d/ so every login has them:
+    echo "export ZTE_IP=192.168.254.1"    > /etc/profile.d/zte.sh
+    echo "export ZTE_USER=Admin"          >> /etc/profile.d/zte.sh
+    echo "export ZTE_PASS=secret"         >> /etc/profile.d/zte.sh
+    chmod +x /etc/profile.d/zte.sh
+EOF
+}
+
+need_tools
+
+CACHE_FILE="/tmp/zte_mc7500.json"
+CACHE_SECS=0
+
+# global --debug flag
+if [ "${1:-}" = "--debug" ]; then DEBUG=1; shift; fi
+
+case "${1:-}" in
+  status)
+    shift
+    _want_json=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --json) _want_json=1 ;;
+        --cache) CACHE_SECS="${2:-0}"; shift
+          case "$CACHE_SECS" in ''|*[!0-9]*) die "--cache needs seconds" ;; esac ;;
+        *) die "unknown status option: $1" ;;
+      esac
+      shift
+    done
+    do_status "$_want_json"
+    ;;
+  restart|reboot)
+    do_restart
+    rm -f "$CACHE_FILE" "$CACHE_FILE.ts" 2>/dev/null
+    ;;
+  cycle)          do_cycle "${2:-}" ;;
+  ''|-h|--help|help) usage ;;
+  *) printf 'Unknown command: %s\n' "$1" >&2; usage; exit 1 ;;
+esac

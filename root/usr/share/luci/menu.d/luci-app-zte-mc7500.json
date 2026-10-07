@@ -1,0 +1,41 @@
+{
+	"admin/modem": {
+		"title": "Modem",
+		"order": 30,
+		"action": {
+			"type": "firstchild",
+			"recurse": true
+		}
+	},
+
+	"admin/modem/zte_mc7500": {
+		"title": "ZTE MC7500",
+		"order": 20,
+		"action": {
+			"type": "alias",
+			"path": "admin/modem/zte_mc7500/status"
+		},
+		"depends": {
+			"acl": [ "luci-app-zte-mc7500" ],
+			"uci": { "zte_mc7500": true }
+		}
+	},
+
+	"admin/modem/zte_mc7500/status": {
+		"title": "Status",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "zte_mc7500/status"
+		}
+	},
+
+	"admin/modem/zte_mc7500/settings": {
+		"title": "Configuration",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "zte_mc7500/settings"
+		}
+	}
+}
