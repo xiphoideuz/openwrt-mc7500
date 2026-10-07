@@ -174,3 +174,81 @@ msgstr ""
 
 msgid "Cannot reach the ZTE MC7500. Check the IP address, credentials and cabling."
 msgstr ""
+
+msgid "Apply schedule"
+msgstr ""
+
+msgid "Applying schedule…"
+msgstr ""
+
+msgid "Connect"
+msgstr ""
+
+msgid "Data session"
+msgstr ""
+
+msgid "Disconnect"
+msgstr ""
+
+msgid "Disconnect data session"
+msgstr ""
+
+msgid "Drop and re-establish the mobile connection? It will be briefly down."
+msgstr ""
+
+msgid "Hour of the daily reboot."
+msgstr ""
+
+msgid "Minute of the daily reboot."
+msgstr ""
+
+msgid "Please wait…"
+msgstr ""
+
+msgid "Really disconnect? The mobile connection will go down."
+msgstr ""
+
+msgid "Reboot hour (0–23)"
+msgstr ""
+
+msgid "Reboot minute (0–59)"
+msgstr ""
+
+msgid "Reboot the ODU daily at the time below. The cron job is managed automatically and visible in System → Scheduled Tasks."
+msgstr ""
+
+msgid "Reconnect"
+msgstr ""
+
+msgid "Reconnect data session"
+msgstr ""
+
+msgid "Schedule"
+msgstr ""
+
+msgid "Schedule applied."
+msgstr ""
+
+msgid "Scheduled reboot"
+msgstr ""
+
+msgid "Sending command to the ODU…"
+msgstr ""
+
+msgid "Updating Scheduled Tasks…"
+msgstr ""
+
+msgid "Writes the cron job from the settings above. Save & Apply first, then press this button."
+msgstr ""
+
+msgid "connected"
+msgstr ""
+
+msgid "down"
+msgstr ""
+
+msgid "unknown"
+msgstr ""
+
+msgid "up"
+msgstr ""

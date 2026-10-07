@@ -1,0 +1,18 @@
+#!/bin/sh /etc/rc.common
+# zte-mc7500 - keep the scheduled ODU reboot in sync with UCI.
+# The actual cron block is managed by `zte_mc7500 schedule apply`
+# so it stays visible in LuCI under System -> Scheduled Tasks.
+
+START=99
+
+start() {
+	/usr/bin/zte_mc7500 schedule apply
+}
+
+reload() {
+	/usr/bin/zte_mc7500 schedule apply
+}
+
+stop() {
+	return 0
+}

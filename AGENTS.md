@@ -38,6 +38,11 @@ po/template/zte-mc7500.po                    gettext template (English source)
   `zwrt_data/get_wwaniface`, `zwrt_data/get_wwandst{type:4}`,
   `zwrt_mc.device.manager/get_device_info{}`,
   `zwrt_data/get_wwandst_monthlimit` + `get_wwandst_clearday` (data plan).
+* Data session: `zwrt_data/set_wwaniface{source_module:"web",cid:1,enable:1|0}`.
+  **Taking the session down invalidates the web session** (next call fails
+  with `-32002`); the backend therefore uses `ubus_auth()` (re-login +
+  one retry) for state-changing calls. `get_wwaniface.connect_status` is
+  `ipv4_ipv6_connected` when up, `disconnected` when down.
 * Reboot: `zwrt_mc.device.manager/device_reboot{"moduleName":"web"}`.
   Success = `result[0] == 0`. The ODU is down ~2–4 min afterwards.
 * Data-plan math (must match the modem's Data Management page):
@@ -83,10 +88,18 @@ Smoke tests on the router:
 ```sh
 zte_mc7500 --version
 zte_mc7500 status --json --cache 60 | head -c 200   # uses /etc/config, no env needed
+zte_mc7500 schedule show
+zte_mc7500 connect | disconnect | reconnect   # flaps WAN - warn first
 ubus call file exec '{"command":"/usr/bin/zte_mc7500","params":["status","--json","--cache","60"]}'
 uci show zte_mc7500
 curl -s -o /dev/null -w '%{http_code}\n' http://172.22.88.1/luci-static/resources/view/zte_mc7500/status.js
 ```
+
+Scheduled reboot plumbing: UCI `sched_reboot/sched_hour/sched_minute` →
+`zte_mc7500 schedule apply` (via `/etc/init.d/zte-mc7500 reload` or the
+settings-page button) → marked block in `/etc/crontabs/root` → visible in
+System → Scheduled Tasks. Never hand-edit the block; re-running apply is
+idempotent (verified byte-identical no-op).
 
 Full `status` (no `--cache`) does a fresh modem login + ~8 RPC calls.
 `restart` reboots the ODU: expect the router's WAN (and ZeroTier SSH

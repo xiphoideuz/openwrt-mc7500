@@ -12,7 +12,7 @@ MAINTAINER:=luci-app-zte-mc7500 contributors
 LUCI_DESCRIPTION:=LuCI interface for the ZTE MC7500 5G outdoor unit. Shows radio, SIM, WAN and data-plan status and allows rebooting the unit.
 LUCI_DEPENDS:=+curl
 LUCI_PKGARCH:=all
-PKG_VERSION:=1.0.0
+PKG_VERSION:=1.1.0
 PKG_RELEASE:=1
 
 include $(TOPDIR)/feeds/luci/luci.mk

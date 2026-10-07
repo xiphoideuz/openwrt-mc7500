@@ -1,14 +1,18 @@
 'use strict';
 'require form';
+'require fs';
+'require ui';
 'require view';
 'require uci';
 
 /*
 	luci-app-zte-mc7500 - LuCI interface for the ZTE MC7500 5G ODU.
-	Configuration view. Inspired by 4IceG/luci-app-3ginfo-lite (GPL-3.0).
+	Configuration view.
 
 	Copyright 2026, licensed under GPL-3.0, see LICENSE.
 */
+
+var BACKEND = '/usr/bin/zte_mc7500';
 
 return view.extend({
 	render: function() {
@@ -51,6 +55,44 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.placeholder = '30';
 		o.rmempty = false;
+
+		o = s.option(form.Flag, 'sched_reboot', _('Scheduled reboot'),
+			_('Reboot the ODU daily at the time below. The cron job is ' +
+			  'managed automatically and visible in System → Scheduled Tasks.'));
+		o.rmempty = false;
+		o.default = '0';
+
+		o = s.option(form.Value, 'sched_hour', _('Reboot hour (0–23)'),
+			_('Hour of the daily reboot.'));
+		o.datatype = 'and(uinteger,range(0,23))';
+		o.placeholder = '4';
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'sched_minute', _('Reboot minute (0–59)'),
+			_('Minute of the daily reboot.'));
+		o.datatype = 'and(uinteger,range(0,59))';
+		o.placeholder = '0';
+		o.rmempty = false;
+
+		o = s.option(form.Button, '_sched_apply', _('Schedule'),
+			_('Writes the cron job from the settings above. ' +
+			  'Save & Apply first, then press this button.'));
+		o.inputstyle = 'action';
+		o.inputtitle = _('Apply schedule');
+		o.onclick = function(ev) {
+			ui.showModal(_('Applying schedule…'), [
+				E('p', { 'class': 'spinning' }, _('Updating Scheduled Tasks…'))
+			]);
+			return L.resolveDefault(fs.exec_direct(BACKEND,
+				['schedule', 'apply']), null).then(function() {
+				ui.hideModal();
+				return L.resolveDefault(fs.exec_direct(BACKEND,
+					['schedule', 'show']), null).then(function(res) {
+					ui.addNotification(null, E('pre', {},
+						(res || '').trim() || _('Schedule applied.')), 'info');
+				});
+			});
+		};
 
 		return m.render();
 	}

@@ -36,7 +36,7 @@ BASE="https://${ZTE_IP}"
 UA="Mozilla/5.0 (X11; Linux aarch64) zte_mc7500/1.0"
 CTIMEOUT=8
 ZERO="00000000000000000000000000000000"
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 CJ=""      # cookie jar
 STOK=""    # session token
@@ -79,7 +79,21 @@ ubus() {
     --data-binary "$_body" 2>/dev/null
 }
 
-# jsonfield <response> <jsonfilter-expr>  (quiet, empty on error)
+# ubus_auth: like ubus(), but re-logins once and retries when the modem
+# answers -32002 (session expired or kicked by another login)
+ubus_auth() {
+  _ua_r="$(ubus "$@")"
+  case "$_ua_r" in
+    *-32002*)
+      dbg "session lost, re-login and retry $2/$3"
+      zte_login
+      _ua_r="$(ubus "$@")"
+      ;;
+  esac
+  printf '%s' "$_ua_r"
+}
+
+# jf <response> <jsonfilter-expr>  (quiet, empty on error)
 jf() {
   printf '%s' "$1" | jsonfilter -q -e "$2" 2>/dev/null
 }
@@ -90,6 +104,7 @@ sha256up() {
 }
 
 zte_login() {
+  [ -n "$CJ" ] && rm -f "$CJ" 2>/dev/null
   CJ="$(mktemp /tmp/zte_mc7500.ck.XXXXXX)" || die "mktemp failed"
   STOK="$ZERO"
 
@@ -142,6 +157,21 @@ fmt_dur() {
   awk -v s="${1:-0}" 'BEGIN{d=int(s/86400);h=int(s%86400/3600);m=int(s%3600/60);sec=int(s%60);
     if (d>0) printf "%dd %dh %dm", d,h,m; else if (h>0) printf "%dh %dm %ds", h,m,sec;
     else if (m>0) printf "%dm %ds", m,sec; else printf "%ds", sec}'
+}
+
+fmt_hms() {
+  # seconds -> HH:MM:SS (like the modem homepage connected_Time)
+  awk -v s="${1:-0}" 'BEGIN{h=int(s/3600); m=int(s%3600/60); sec=int(s%60);
+    printf "%02d:%02d:%02d", h, m, sec}'
+}
+
+# data session state from connect_status: up / down / unknown
+conn_state() {
+  case "${1:-}" in
+    *disconnect*|*DISCONNECT*) printf 'down' ;;
+    *connect*|*CONNECT*)       printf 'up' ;;
+    *)                        printf 'unknown' ;;
+  esac
 }
 
 fmt_rate() {
@@ -291,6 +321,12 @@ do_status() {
   printf '=== ZTE MC7500 @ %s ===\n' "$ZTE_IP"
   printf 'WAN mode      : %s (auto: %s)\n' "${_opms:-?}" "${_opms_auto:-?}"
   printf 'WAN status    : %s / %s\n' "${_wan_stat:-?}" "${_conn:-?}"
+  _cs="$(conn_state "$_conn")"
+  if [ "$_cs" = "up" ]; then
+    printf 'Data session  : up (connected %s)\n' "$(fmt_hms "${_sess:-0}")"
+  else
+    printf 'Data session  : %s\n' "$_cs"
+  fi
   printf 'IPv4          : %s gw %s\n' "${_v4:-?}" "${_v4gw:-?}"
   printf 'IPv6          : %s\n' "${_v6:-?}"
   printf 'Uptime (ODU)  : %s   modem-sched-reboot: %s\n' "$(fmt_dur "${_up:-0}")" "${_rsched:-?}"
@@ -368,7 +404,7 @@ do_status() {
 do_restart() {
   zte_login
   printf 'Sending reboot to ZTE MC7500...\n'
-  _r="$(ubus "zwrt_mc.device.manager" "device_reboot" '{"moduleName":"web"}' "device_reboot")"
+  _r="$(ubus_auth "zwrt_mc.device.manager" "device_reboot" '{"moduleName":"web"}' "device_reboot")"
   dbg "reboot: $_r"
   _rc="$(printf '%s' "$_r" | jsonfilter -q -e '@[0].result[0]' 2>/dev/null)"
   # success = result[0] == 0 ; the manager returns d() => {result:success/fail}
@@ -380,6 +416,149 @@ do_restart() {
   fi
   # session dies with the reboot; skip logout
   STOK="$ZERO"
+}
+
+# data session up/down, like the modem homepage connect button
+# usage: do_conn up|down|restart
+do_conn() {
+  _what="$1"
+  zte_login
+  _set_iface() {
+    ubus_auth "zwrt_data" "set_wwaniface" \
+      '{"source_module":"web","cid":1,"enable":'"$1"'}' "set_wwaniface"
+  }
+  _check_iface() {
+    _st="$(ubus_auth "zwrt_data" "get_wwaniface" \
+      '{"source_module":"web","cid":1,"connect_status":""}' "get_wwaniface")"
+    conn_state "$(printf '%s' "$_st" | jsonfilter -q -e '@[0].result[1].connect_status' 2>/dev/null)"
+  }
+  case "$_what" in
+    up)
+      printf 'Connecting data session...\n'
+      _r="$(_set_iface 1)"; dbg "set_wwaniface up: $_r"
+      ;;
+    down)
+      printf 'Disconnecting data session...\n'
+      _r="$(_set_iface 0)"; dbg "set_wwaniface down: $_r"
+      ;;
+    restart)
+      printf 'Restarting data session (down, wait, up)...\n'
+      _r="$(_set_iface 0)"; dbg "set_wwaniface down: $_r"
+      sleep 5
+      _r="$(_set_iface 1)"; dbg "set_wwaniface up: $_r"
+      ;;
+  esac
+  _rc="$(printf '%s' "$_r" | jsonfilter -q -e '@[0].result[0]' 2>/dev/null)"
+  if [ "$_rc" != "0" ]; then
+    zte_logout
+    die "modem refused the command (result=${_rc:-?}): $(printf '%.200s' "$_r")"
+  fi
+  # give the modem a moment, then report the real state
+  sleep 3
+  _now="$(_check_iface)"
+  printf 'Data session now: %s\n' "$_now"
+  zte_logout
+  rm -f "$CACHE_FILE" "$CACHE_FILE.ts" 2>/dev/null
+}
+
+CRON_FILE="/etc/crontabs/root"
+CRON_BEGIN="# --- zte-mc7500 scheduled reboot: managed automatically, do not edit ---"
+CRON_END="# --- end zte-mc7500 ---"
+
+# sync_cron: make /etc/crontabs/root match UCI sched_* settings
+sync_cron() {
+  command -v uci >/dev/null 2>&1 || die "schedule needs UCI (uci not found)"
+  _en="$(uci -q get zte_mc7500.main.sched_reboot 2>/dev/null)"; [ -n "$_en" ] || _en=0
+  _h="$(uci -q get zte_mc7500.main.sched_hour 2>/dev/null)";   [ -n "$_h" ] || _h=4
+  _m="$(uci -q get zte_mc7500.main.sched_minute 2>/dev/null)"; [ -n "$_m" ] || _m=0
+  case "$_h" in ''|*[!0-9]*) _h=4 ;; esac
+  case "$_m" in ''|*[!0-9]*) _m=0 ;; esac
+  if [ "$_h" -gt 23 ]; then _h=4; fi
+  if [ "$_m" -gt 59 ]; then _m=0; fi
+  _tmp="$(mktemp /tmp/zte_cron.XXXXXX)" || die "mktemp failed"
+  if [ -f "$CRON_FILE" ] && grep -qF "$CRON_BEGIN" "$CRON_FILE" 2>/dev/null \
+     && grep -qF "$CRON_END" "$CRON_FILE" 2>/dev/null; then
+    awk -v b="$CRON_BEGIN" -v e="$CRON_END" \
+      '$0==b{skip=1} !skip{print} $0==e{skip=0}' "$CRON_FILE" > "$_tmp"
+  elif [ -f "$CRON_FILE" ]; then
+    cat "$CRON_FILE" > "$_tmp"
+  else
+    : > "$_tmp"
+  fi
+  if [ "$_en" = "1" ]; then
+    printf '%s\n%d %d * * * /usr/bin/zte_mc7500 restart\n%s\n' \
+      "$CRON_BEGIN" "$_m" "$_h" "$CRON_END" >> "$_tmp"
+  fi
+  if [ -f "$CRON_FILE" ] && cmp -s "$CRON_FILE" "$_tmp"; then
+    rm -f "$_tmp"
+    printf 'Scheduled Tasks unchanged.\n'
+    return 0
+  fi
+  cat "$_tmp" > "$CRON_FILE"
+  rm -f "$_tmp"
+  if [ -x /etc/init.d/cron ]; then
+    /etc/init.d/cron reload >/dev/null 2>&1
+  fi
+  printf 'Scheduled Tasks updated.\n'
+}
+
+# usage: do_schedule [show|on|off|apply|HH:MM]
+do_schedule() {
+  command -v uci >/dev/null 2>&1 || die "schedule needs UCI (uci not found)"
+  case "${1:-show}" in
+    show)
+      _en="$(uci -q get zte_mc7500.main.sched_reboot 2>/dev/null)"; [ -n "$_en" ] || _en=0
+      _h="$(uci -q get zte_mc7500.main.sched_hour 2>/dev/null)";   [ -n "$_h" ] || _h=4
+      _m="$(uci -q get zte_mc7500.main.sched_minute 2>/dev/null)"; [ -n "$_m" ] || _m=0
+      if [ "$_en" = "1" ]; then
+        printf 'Scheduled reboot: ON, daily at %02d:%02d\n' "$_h" "$_m"
+      else
+        printf 'Scheduled reboot: OFF (daily time kept at %02d:%02d)\n' "$_h" "$_m"
+      fi
+      if [ -f "$CRON_FILE" ] && grep -qF "$CRON_BEGIN" "$CRON_FILE" 2>/dev/null; then
+        grep -F "zte_mc7500 restart" "$CRON_FILE" 2>/dev/null | sed 's/^/Cron active: /'
+      else
+        printf 'Cron entry: absent (see System -> Scheduled Tasks)\n'
+      fi
+      ;;
+    on)
+      uci set zte_mc7500.main.sched_reboot='1' && uci commit zte_mc7500 \
+        || die "uci write failed"
+      printf 'Scheduled reboot enabled.\n'
+      _sync_via_init
+      ;;
+    off)
+      uci set zte_mc7500.main.sched_reboot='0' && uci commit zte_mc7500 \
+        || die "uci write failed"
+      printf 'Scheduled reboot disabled.\n'
+      _sync_via_init
+      ;;
+    apply)
+      sync_cron
+      ;;
+    [0-2][0-9]:[0-5][0-9])
+      _h="${1%%:*}"; _m="${1##*:}"
+      _h="$(printf '%d' "$_h" 2>/dev/null)"; _m="$(printf '%d' "$_m" 2>/dev/null)"
+      if [ "$_h" -gt 23 ] 2>/dev/null; then die "hour 00-23, got: $1"; fi
+      uci set zte_mc7500.main.sched_hour="$_h" && \
+      uci set zte_mc7500.main.sched_minute="$_m" && \
+      uci set zte_mc7500.main.sched_reboot='1' && uci commit zte_mc7500 \
+        || die "uci write failed"
+      printf 'Scheduled reboot set: daily at %02d:%02d.\n' "$_h" "$_m"
+      _sync_via_init
+      ;;
+    *) die "usage: $0 schedule [show|on|off|apply|HH:MM]" ;;
+  esac
+}
+
+# re-sync cron via init script when present (it also handles reload),
+# otherwise sync directly (backend used standalone without the package)
+_sync_via_init() {
+  if [ -x /etc/init.d/zte-mc7500 ]; then
+    /etc/init.d/zte-mc7500 reload
+  else
+    sync_cron
+  fi
 }
 
 do_cycle() {
@@ -404,6 +583,12 @@ Usage: zte_mc7500.sh [--debug] <cmd> [args]
                 --json prints machine-readable JSON,
                 --cache N reuses a cached reply younger than N seconds
   restart           login + reboot the ODU
+  connect           bring the data session up (modem homepage button)
+  disconnect        take the data session down
+  reconnect         data session down, wait, up
+  schedule [show|on|off|apply|HH:MM]
+                manage the daily scheduled reboot (cron, visible in
+                System -> Scheduled Tasks); HH:MM enables it daily
   cycle <seconds>   status + reboot every N seconds (min 10)
   --version         print version
 
@@ -456,6 +641,10 @@ case "${1:-}" in
     do_restart
     rm -f "$CACHE_FILE" "$CACHE_FILE.ts" 2>/dev/null
     ;;
+  connect)    do_conn up ;;
+  disconnect) do_conn down ;;
+  reconnect)  do_conn restart ;;
+  schedule)   do_schedule "${2:-show}" "${3:-}" ;;
   cycle)          do_cycle "${2:-}" ;;
   --version|-V)   printf 'zte_mc7500 %s\n' "$VERSION" ;;
   ''|-h|--help|help) usage ;;

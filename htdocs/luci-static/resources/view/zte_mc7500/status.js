@@ -47,8 +47,24 @@ function fmtRate(b) {
 	return Math.floor(bps) + ' bps';
 }
 
-function sigColor(v, good, fair) {
-	if (v == null || v === '' || isNaN(+v)) return '#999';
+function fmtHMS(s) {
+	s = Math.floor(num(s));
+	var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60),
+	    sec = s % 60;
+	return '%02d:%02d:%02d'.format(h, m, sec);
+}
+
+/* data-session state from connect_status: 'up' / 'down' / 'unknown' */
+function connState(st) {
+	st = String(st || '');
+	if (/disconnect/i.test(st))
+		return 'down';
+	if (/connect/i.test(st))
+		return 'up';
+	return 'unknown';
+}
+
+function sigColor(v, good, fair) {	if (v == null || v === '' || isNaN(+v)) return '#999';
 	v = +v;
 	if (v >= good) return 'limegreen';
 	if (v >= fair) return 'gold';
@@ -145,6 +161,15 @@ return view.extend({
 			' (auto: ' + (wan.opms_wan_auto_mode || '?') + ')');
 		setText('zte-wanstatus', (wan.current_wan_status || '?') +
 			' / ' + (iface.connect_status || '?'));
+		var cs = connState(iface.connect_status);
+		if (cs === 'up' && usage.real_time)
+			setText('zte-connsession', '%s (%s %s)'.format(
+				_('up'), _('connected'), fmtHMS(usage.real_time)));
+		else
+			setText('zte-connsession', _(cs));
+		var toggle = document.getElementById('zte-connbtn');
+		if (toggle)
+			toggle.textContent = (cs === 'up') ? _('Disconnect') : _('Connect');
 		setText('zte-ipv4', (iface.ipv4_address || '?') +
 			'  gw ' + (iface.ipv4_gateway || '?'));
 		setText('zte-ipv6', iface.ipv6_address || '–');
@@ -227,8 +252,68 @@ return view.extend({
 		}
 	},
 
-	handleReboot: function(ev) {
+	runConnCmd: function(cmd, doneMsg) {
 		var self = this;
+		ui.showModal(_('Please wait…'), [
+			E('p', { 'class': 'spinning' }, doneMsg || _('Sending command to the ODU…'))
+		]);
+		L.resolveDefault(fs.exec_direct(BACKEND, [cmd]), null).then(function() {
+			/* session-changing commands invalidate the cache */
+			return self.fetchStatus(0);
+		}).then(function(json) {
+			ui.hideModal();
+			self.updateView(json);
+		});
+	},
+
+	handleConnToggle: function(ev) {
+		var self = this;
+		var label = (document.getElementById('zte-connbtn') || {}).textContent || '';
+		if (label === _('Disconnect')) {
+			ui.showModal(_('Disconnect data session'), [
+				E('p', _('Really disconnect? The mobile connection will go down.')),
+				E('div', { 'class': 'right' }, [
+					E('button', {
+						'class': 'btn',
+						'click': ui.hideModal
+					}, _('Cancel')),
+					' ',
+					E('button', {
+						'class': 'btn cbi-button-negative important',
+						'click': function() {
+							self.runConnCmd('disconnect');
+						}
+					}, _('Disconnect'))
+				])
+			]);
+		}
+		else {
+			self.runConnCmd('connect');
+		}
+	},
+
+	handleReconnect: function(ev) {
+		var self = this;
+		ui.showModal(_('Reconnect data session'), [
+			E('p', _('Drop and re-establish the mobile connection? ' +
+				'It will be briefly down.')),
+			E('div', { 'class': 'right' }, [
+				E('button', {
+					'class': 'btn',
+					'click': ui.hideModal
+				}, _('Cancel')),
+				' ',
+				E('button', {
+					'class': 'btn cbi-button-action important',
+					'click': function() {
+						self.runConnCmd('reconnect');
+					}
+				}, _('Reconnect'))
+			])
+		]);
+	},
+
+	handleReboot: function(ev) {		var self = this;
 		ui.showModal(_('Reboot ZTE MC7500'), [
 			E('p', _('Really reboot the outdoor unit? The mobile connection ' +
 				'will be down for a few minutes.')),
@@ -266,6 +351,7 @@ return view.extend({
 		var connTable = E('table', { 'class': 'table' });
 		row2(connTable, _('WAN mode'), 'zte-opms');
 		row2(connTable, _('WAN status'), 'zte-wanstatus');
+		row2(connTable, _('Data session'), 'zte-connsession');
 		row2(connTable, _('IPv4'), 'zte-ipv4');
 		row2(connTable, _('IPv6'), 'zte-ipv6');
 		row2(connTable, _('ODU uptime'), 'zte-uptime');
@@ -365,6 +451,17 @@ return view.extend({
 						});
 					}
 				}, _('Refresh now')),
+				' ',
+				E('button', {
+					'id': 'zte-connbtn',
+					'class': 'btn cbi-button-action',
+					'click': ui.createHandlerFn(self, self.handleConnToggle)
+				}, _('Connect')),
+				' ',
+				E('button', {
+					'class': 'btn cbi-button-action',
+					'click': ui.createHandlerFn(self, self.handleReconnect)
+				}, _('Reconnect')),
 				' ',
 				E('button', {
 					'class': 'btn cbi-button-negative',

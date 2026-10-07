@@ -17,30 +17,46 @@ plus Refresh and Reboot buttons.
   session/day/month counters and the **data-plan block** (plan size, used vs.
   remaining, alert threshold, auto-clear day) — mirroring the modem's own
   *Data Management* page.
-* **Configuration page**: modem IP, username, password, page refresh and
-  backend cache intervals (stored in `/etc/config/zte_mc7500`).
-* **Reboot ODU** button with confirmation.
+* **Configuration page**: modem IP, username, password, page refresh,
+  backend cache, and the **scheduled daily reboot** (enable + hour/minute,
+  materialized as a cron job visible in System → Scheduled Tasks).
+* **Reboot ODU** button with confirmation, plus **Connect / Disconnect /
+  Reconnect** buttons for the data session (like the modem homepage button).
 * **CLI backend** `/usr/bin/zte_mc7500` (also usable over SSH):
 
 ```sh
 zte_mc7500 status                    # human-readable, 3ginfo-style
 zte_mc7500 status --json             # machine-readable JSON
 zte_mc7500 status --json --cache 30  # serve cache younger than 30s
+zte_mc7500 connect                    # data session up
+zte_mc7500 disconnect                 # data session down
+zte_mc7500 reconnect                   # down, wait, up
 zte_mc7500 restart                    # reboot the ODU
+zte_mc7500 schedule                   # show scheduled reboot
+zte_mc7500 schedule 04:00            # daily reboot at 04:00
+zte_mc7500 schedule off              # disable scheduled reboot
 zte_mc7500 cycle 3600                # status + reboot every hour
 zte_mc7500 --version
 ```
 
 ## Scheduled reboot
 
-Use cron on the router (the ODU also has a native scheduled-reboot
-feature, but a cron job is visible and easy to change):
+Set it from the Configuration page (Save & Apply, then *Apply schedule*),
+or from the CLI (`zte_mc7500 schedule 04:00`). Either way the result is a
+marked cron block in `/etc/crontabs/root`, therefore visible and editable
+in LuCI under System → Scheduled Tasks:
 
-```sh
-# reboot the ODU daily at 04:00
-echo '0 4 * * * /usr/bin/zte_mc7500 restart' >> /etc/crontabs/root
-/etc/init.d/cron restart
 ```
+# --- zte-mc7500 scheduled reboot: managed automatically, do not edit ---
+0 4 * * * /usr/bin/zte_mc7500 restart
+# --- end zte-mc7500 ---
+```
+
+The `/etc/init.d/zte-mc7500` service (`enable` it) re-syncs the block
+from UCI at boot. A daily cron job is usually enough; for sub-hour
+intervals use `zte_mc7500 cycle <seconds>` instead (the ODU also has a
+native scheduled-reboot feature, but a cron job is visible and easy
+to change).
 
 ## How it works
 
@@ -91,6 +107,9 @@ config main 'main'
 	option password 'W72L54WV'
 	option refresh '10'
 	option cache '30'
+	option sched_reboot '0'
+	option sched_hour '4'
+	option sched_minute '0'
 ```
 
 Environment variables `ZTE_IP` / `ZTE_USER` / `ZTE_PASS` override
