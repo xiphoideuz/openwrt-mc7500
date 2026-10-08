@@ -403,3 +403,24 @@ msgstr ""
 
 msgid "none"
 msgstr ""
+
+msgid "Automatic switching"
+msgstr ""
+
+msgid "Directional antenna"
+msgstr ""
+
+msgid "Directional wide beam antenna"
+msgstr ""
+
+msgid "Loading modem data…"
+msgstr ""
+
+msgid "Omnidirectional antenna"
+msgstr ""
+
+msgid "current"
+msgstr ""
+
+msgid "modem default"
+msgstr ""

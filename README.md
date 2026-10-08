@@ -106,9 +106,11 @@ developer-options page:
 * **Band lock**: comma-separated band lists, e.g. `bandlock lte 3,5`.
   The modem validates; a wrong mask can cut service until reset.
 * **Network mode**: `WL_AND_5G` (5G/4G auto), `LTE_AND_5G` (5G NSA),
-  `Only_5G` (5G SA), `Only_LTE` (4G only). The modem re-registers, so the
+  `Only_5G` (5G SA), `Only_LTE` (4G only), `NETWORK_auto` (modem default).
+  The modem re-registers, so the
   link (and this SSH session, if it rides the mobile link) may flap.
-* **Antenna**: `auto` or `front_directional`.
+* **Antenna**: `auto` (automatic), `front_directional`, `rear_directional`,
+  `omni`.
 * **Saved states**: named snapshots of bands + mode + antenna in the
   flatfile `/etc/zte_mc7500.states` (one `name|epoch|…` line per state,
   deliberately *not* UCI). Workflow: `states save working` → experiment →

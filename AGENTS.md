@@ -60,8 +60,8 @@ po/template/zte-mc7500.po                    gettext template (English source)
   `nwinfo_set_lte_ext_band{lte_band}`, `nwinfo_set_sa_bandlock`
   (`{nr5g_sa_band_lock}` for SA, `{nr5g_band,nr5g_type:"1"}` for NSA),
   `nwinfo_reset_band_cell_setting{}` (full auto reset),
-  `nwinfo_set_netselect{net_select}` (WL_AND_5G/LTE_AND_5G/Only_5G/Only_LTE),
-  `nwinfo_set_odu_as_mode{odu_as_mode}` (auto/front_directional).
+  `nwinfo_set_netselect{net_select}` (WL_AND_5G/LTE_AND_5G/Only_5G/Only_LTE/NETWORK_auto),
+  `nwinfo_set_odu_as_mode{odu_as_mode}` (auto/front_directional/rear_directional/omni).
   **Writes kick the web session** (next call → `-32002`) and may make the
   modem re-register (link flap); `ubus_auth()` covers the former, confirm
   modals + read-back cover the latter. Named states live in the flatfile

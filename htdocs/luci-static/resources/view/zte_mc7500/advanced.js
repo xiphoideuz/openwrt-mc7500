@@ -64,21 +64,35 @@ return view.extend({
 				b.lte_band || _('auto'), b.nr5g_sa_band_lock || _('auto'),
 				b.nr5g_nsa_band_lock || _('auto'),
 				b.net_select || '?', b.antenna || '?'));
+		/* prefill inputs once (never clobber typing); labels update always */
+		var first = !this._prefilled;
+		this._prefilled = true;
 		var le = document.getElementById('zte-adv-lte');
-		if (le && b.lte_band)
-			le.placeholder = b.lte_band;
+		if (le) {
+			if (first && b.lte_band)
+				le.value = b.lte_band;
+			setT('zte-adv-cur-lte', '%s: %s'.format(_('current'), b.lte_band || _('auto')));
+		}
 		var se = document.getElementById('zte-adv-sa');
-		if (se && b.nr5g_sa_band_lock)
-			se.placeholder = b.nr5g_sa_band_lock;
+		if (se) {
+			if (first && b.nr5g_sa_band_lock)
+				se.value = b.nr5g_sa_band_lock;
+			setT('zte-adv-cur-sa', '%s: %s'.format(_('current'), b.nr5g_sa_band_lock || _('auto')));
+		}
 		var ne = document.getElementById('zte-adv-nsa');
-		if (ne && b.nr5g_nsa_band_lock)
-			ne.placeholder = b.nr5g_nsa_band_lock;
+		if (ne) {
+			if (first && b.nr5g_nsa_band_lock)
+				ne.value = b.nr5g_nsa_band_lock;
+			setT('zte-adv-cur-nsa', '%s: %s'.format(_('current'), b.nr5g_nsa_band_lock || _('auto')));
+		}
 		var nm = document.getElementById('zte-adv-netmode');
 		if (nm && b.net_select)
 			nm.value = b.net_select;
+		setT('zte-adv-cur-netmode', '%s: %s'.format(_('current'), b.net_select || '?'));
 		var an = document.getElementById('zte-adv-ant');
 		if (an && b.antenna)
 			an.value = b.antenna;
+		setT('zte-adv-cur-ant', '%s: %s'.format(_('current'), b.antenna || '?'));
 	},
 
 	updateStates: function(list) {
@@ -222,9 +236,13 @@ return view.extend({
 	render: function() {
 		var self = this;
 
-		function bandRow(label, inputId, which) {
+		function bandRow(label, inputId, curId, which) {
 			return E('tr', [
-				E('td', { 'style': 'width:40%' }, label),
+				E('td', { 'style': 'width:40%' }, [
+					label,
+					E('br'),
+					E('span', { 'id': curId, 'style': 'font-size:85%;color:#666' }, '')
+				]),
 				E('td', {}, [
 					E('input', {
 						'id': inputId,
@@ -242,20 +260,25 @@ return view.extend({
 		}
 
 		var bandTable = E('table', { 'class': 'table' }, [
-			bandRow(_('LTE bands'), 'zte-adv-lte', 'lte'),
-			bandRow(_('NR SA bands'), 'zte-adv-sa', 'sa'),
-			bandRow(_('NR NSA bands'), 'zte-adv-nsa', 'nsa')
+			bandRow(_('LTE bands'), 'zte-adv-lte', 'zte-adv-cur-lte', 'lte'),
+			bandRow(_('NR SA bands'), 'zte-adv-sa', 'zte-adv-cur-sa', 'sa'),
+			bandRow(_('NR NSA bands'), 'zte-adv-nsa', 'zte-adv-cur-nsa', 'nsa')
 		]);
 
 		var modeTable = E('table', { 'class': 'table' }, [
 			E('tr', [
-				E('td', { 'style': 'width:40%' }, _('Network mode')),
+				E('td', { 'style': 'width:40%' }, [
+					_('Network mode'),
+					E('br'),
+					E('span', { 'id': 'zte-adv-cur-netmode', 'style': 'font-size:85%;color:#666' }, '')
+				]),
 				E('td', {}, [
 					E('select', { 'id': 'zte-adv-netmode' }, [
 						E('option', { 'value': 'WL_AND_5G' }, '5G/4G (auto)'),
 						E('option', { 'value': 'LTE_AND_5G' }, '5G NSA'),
 						E('option', { 'value': 'Only_5G' }, '5G SA'),
-						E('option', { 'value': 'Only_LTE' }, '4G only')
+						E('option', { 'value': 'Only_LTE' }, '4G only'),
+						E('option', { 'value': 'NETWORK_auto' }, _('modem default'))
 					]),
 					' ',
 					E('button', {
@@ -265,11 +288,17 @@ return view.extend({
 				])
 			]),
 			E('tr', [
-				E('td', _('Antenna')),
+				E('td', [
+					_('Antenna'),
+					E('br'),
+					E('span', { 'id': 'zte-adv-cur-ant', 'style': 'font-size:85%;color:#666' }, '')
+				]),
 				E('td', {}, [
 					E('select', { 'id': 'zte-adv-ant' }, [
-						E('option', { 'value': 'auto' }, _('auto')),
-						E('option', { 'value': 'front_directional' }, _('front directional'))
+						E('option', { 'value': 'auto' }, _('Automatic switching')),
+						E('option', { 'value': 'front_directional' }, _('Directional antenna')),
+						E('option', { 'value': 'rear_directional' }, _('Directional wide beam antenna')),
+						E('option', { 'value': 'omni' }, _('Omnidirectional antenna'))
 					]),
 					' ',
 					E('button', {
@@ -296,7 +325,12 @@ return view.extend({
 			E('tr', [E('td', _('Auth / user')), E('td', { 'id': 'zte-adv-apn-auth' }, '–')])
 		]);
 
-		var view = E('div', { 'class': 'cbi-section' }, [
+		var view = E('div', { 'class': 'cbi-section zte-mc7500' }, [
+			E('style', {}, '.zte-mc7500 table.table{table-layout:fixed;width:100%}' +
+				'.zte-mc7500 td{overflow-wrap:anywhere;word-break:break-word}' +
+				'.zte-mc7500 input[type=text]{max-width:100%}' +
+				'.zte-mc7500 .cbi-page-actions .btn{margin-bottom:4px}' +
+				'#zte-adv-cur{white-space:pre-wrap;overflow-wrap:anywhere}'),
 			E('div', { 'class': 'alert-message warning' }, [
 				E('strong', {}, _('Advanced settings — Proceed at your own risk')),
 				E('p', {}, _('Band locks, network mode and antenna changes can drop the mobile connection. Save the working state first, so you can restore it.'))

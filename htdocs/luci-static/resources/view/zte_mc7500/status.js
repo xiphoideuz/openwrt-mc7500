@@ -77,10 +77,19 @@ function makeBar() {
 		'style': 'height:100%;width:0%;background:#999;border-radius:3px;transition:width .4s;'
 	});
 	return E('div', {
+		'class': 'zte-bar',
 		'style': 'display:inline-block;vertical-align:middle;width:140px;height:12px;' +
 		         'background:#eee;border:1px solid #ccc;border-radius:3px;margin-right:6px;'
 	}, fill);
 }
+
+/* narrow screens (phones): fixed table layout + wrapping values */
+var RESPONSIVE_CSS = '.zte-mc7500 table.table{table-layout:fixed;width:100%}' +
+	'.zte-mc7500 td{overflow-wrap:anywhere;word-break:break-word}' +
+	'.zte-mc7500 .zte-bar{width:100%!important;max-width:140px}' +
+	'.zte-mc7500 input[type=text]{max-width:100%}' +
+	'.zte-mc7500 .cbi-page-actions .btn{margin-bottom:4px}' +
+	'#zte-adv-cur{white-space:pre-wrap;overflow-wrap:anywhere}';
 
 function setBar(bar, pct, color) {
 	pct = Math.max(0, Math.min(100, num(pct)));
@@ -152,11 +161,18 @@ return view.extend({
 		});
 	},
 
-	fetchExtra: function() {
-		return L.resolveDefault(Promise.all([
-			L.resolveDefault(fs.exec_direct(BACKEND, ['bands', '--json']), null).then(parseJson),
-			L.resolveDefault(fs.exec_direct(BACKEND, ['apn', '--json']), null).then(parseJson)
-		]), [null, null]);
+	fetchExtra: function(cache) {
+		/* strictly serial: concurrent backend runs log into the modem
+		   at the same time and kick each other's sessions */
+		return L.resolveDefault(
+			fs.exec_direct(BACKEND, ['bands', '--json', '--cache', String(cache)]), null
+		).then(parseJson).then(function(bands) {
+			return L.resolveDefault(
+				fs.exec_direct(BACKEND, ['apn', '--json', '--cache', String(cache)]), null
+			).then(parseJson).then(function(apn) {
+				return [bands, apn];
+			});
+		});
 	},
 
 	updateFooter: function(json) {
@@ -189,13 +205,23 @@ return view.extend({
 	updateView: function(json, extra) {
 		this.updateFooter(json);
 		var banner = document.getElementById('zte-offline');
+		var loading = document.getElementById('zte-loading');
 		if (!json || !json.radio) {
-			if (banner)
-				banner.style.display = '';
+			/* one failed poll is just slowness; alarm only when it persists */
+			this._fails = (this._fails || 0) + 1;
+			if (this._fails >= 2) {
+				if (banner)
+					banner.style.display = '';
+				if (loading)
+					loading.style.display = 'none';
+			}
 			return;
 		}
+		this._fails = 0;
 		if (banner)
 			banner.style.display = 'none';
+		if (loading)
+			loading.style.display = 'none';
 
 		var wan = json.wan || {}, radio = json.radio || {}, sim = json.sim || {},
 		    iface = json.iface || {}, usage = json.usage || {},
@@ -497,12 +523,17 @@ return view.extend({
 			'style': 'display:none'
 		}, _('Data usage has reached the alert threshold!'));
 
-		var view = E('div', { 'class': 'cbi-section' }, [
+		var view = E('div', { 'class': 'cbi-section zte-mc7500' }, [
+			E('style', {}, RESPONSIVE_CSS),
 			E('div', {
 				'id': 'zte-offline',
 				'class': 'alert-message error',
 				'style': 'display:none'
 			}, _('Cannot reach the ZTE MC7500. Check the IP address, credentials and cabling.')),
+			E('p', {
+				'id': 'zte-loading',
+				'class': 'spinning'
+			}, _('Loading modem data…')),
 			E('h2', _('Connection')),
 			connTable,
 			E('h2', _('Radio')),
@@ -530,7 +561,7 @@ return view.extend({
 					'class': 'btn cbi-button-action',
 					'click': function() {
 						self.fetchStatus(0).then(function(json) {
-							return self.fetchExtra().then(function(extra) {
+							return self.fetchExtra(0).then(function(extra) {
 								self.updateView(json, extra);
 							});
 						});
@@ -556,7 +587,7 @@ return view.extend({
 		]);
 
 		self.fetchStatus(cfg.cache).then(function(json) {
-			return self.fetchExtra().then(function(extra) {
+			return self.fetchExtra(cfg.cache).then(function(extra) {
 				self.updateView(json, extra);
 			});
 		});

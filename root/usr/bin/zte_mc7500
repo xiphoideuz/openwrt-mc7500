@@ -597,7 +597,9 @@ _radio_set() {
 }
 
 _radio_invalidate() {
-  rm -f "$CACHE_FILE" "$CACHE_FILE.ts" 2>/dev/null
+  rm -f "$CACHE_FILE" "$CACHE_FILE.ts" \
+    /tmp/zte_mc7500.bands.json /tmp/zte_mc7500.bands.json.ts \
+    /tmp/zte_mc7500.apn.json /tmp/zte_mc7500.apn.json.ts 2>/dev/null
 }
 
 # _norm_bands <list>: strip spaces, validate digits/commas; prints clean list
@@ -611,12 +613,27 @@ _norm_bands() {
 }
 
 do_bands() {
+  _bj="$1"; _bc="${2:-0}"
+  _bfile="/tmp/zte_mc7500.bands.json"
+  if [ "$_bc" -gt 0 ] 2>/dev/null && [ -f "$_bfile" ] && [ -f "$_bfile.ts" ]; then
+    _bmt="$(cat "$_bfile.ts" 2>/dev/null || echo 0)"
+    case "$_bmt" in ''|*[!0-9]*) _bmt=0 ;; esac
+    if [ $(( $(date +%s) - _bmt )) -lt "$_bc" ]; then
+      cat "$_bfile"
+      return 0
+    fi
+  fi
   zte_login
   _radio_read
-  if [ "$1" = "--json" ]; then
-    printf '{"lte_band":"%s","lte_band_lock":"%s","nr5g_sa_band_lock":"%s","nr5g_nsa_band_lock":"%s","nr5g_nrdc_band_lock":"%s","net_select":"%s","net_select_mode":"%s","lock_lte_cell":"%s","lock_nr_cell":"%s","antenna":"%s"}\n' \
+  if [ "$_bj" = "1" ]; then
+    _bout="$(printf '{"lte_band":"%s","lte_band_lock":"%s","nr5g_sa_band_lock":"%s","nr5g_nsa_band_lock":"%s","nr5g_nrdc_band_lock":"%s","net_select":"%s","net_select_mode":"%s","lock_lte_cell":"%s","lock_nr_cell":"%s","antenna":"%s"}\n' \
       "$R_LTE" "$R_LTEMASK" "$R_SA" "$R_NSA" "$R_NRDC" \
-      "$R_NET" "$R_NETMODE" "$R_LTECELL" "$R_NRCELL" "$R_ANT"
+      "$R_NET" "$R_NETMODE" "$R_LTECELL" "$R_NRCELL" "$R_ANT")"
+    if [ "$_bc" -gt 0 ] 2>/dev/null; then
+      printf '%s' "$_bout" > "$_bfile" 2>/dev/null
+      date +%s > "$_bfile.ts" 2>/dev/null
+    fi
+    printf '%s' "$_bout"
     zte_logout
     return 0
   fi
@@ -697,13 +714,13 @@ do_netmode() {
     zte_login
     _radio_read
     printf 'Network mode: %s (%s)\n' "${R_NET:-?}" "${R_NETMODE:-?}"
-    printf 'Choices: WL_AND_5G (5G/4G auto), LTE_AND_5G (5G NSA), Only_5G (5G SA), Only_LTE (4G)\n'
+    printf 'Choices: WL_AND_5G (5G/4G auto), LTE_AND_5G (5G NSA), Only_5G (5G SA), Only_LTE (4G), NETWORK_auto (modem default)\n'
     zte_logout
     return 0
   fi
   case "$1" in
-    WL_AND_5G|LTE_AND_5G|Only_5G|Only_LTE) ;;
-    *) die "usage: $0 netmode [WL_AND_5G|LTE_AND_5G|Only_5G|Only_LTE]" ;;
+    WL_AND_5G|LTE_AND_5G|Only_5G|Only_LTE|NETWORK_auto) ;;
+    *) die "usage: $0 netmode [WL_AND_5G|LTE_AND_5G|Only_5G|Only_LTE|NETWORK_auto]" ;;
   esac
   printf 'Setting network mode to %s (may briefly re-register)...\n' "$1"
   zte_login
@@ -721,13 +738,13 @@ do_antenna() {
     zte_login
     _radio_read
     printf 'Antenna: %s\n' "${R_ANT:-?}"
-    printf 'Choices: auto, front_directional\n'
+    printf 'Choices: auto (automatic), front_directional, rear_directional, omni\n'
     zte_logout
     return 0
   fi
   case "$1" in
-    auto|front_directional) ;;
-    *) die "usage: $0 antenna [auto|front_directional]" ;;
+    auto|front_directional|rear_directional|omni) ;;
+    *) die "usage: $0 antenna [auto|front_directional|rear_directional|omni]" ;;
   esac
   zte_login
   _radio_set "zte_nwinfo_api" "nwinfo_set_odu_as_mode" \
@@ -740,6 +757,16 @@ do_antenna() {
 }
 
 do_apn() {
+  _aj="$1"; _ac="${2:-0}"
+  _afile="/tmp/zte_mc7500.apn.json"
+  if [ "$_ac" -gt 0 ] 2>/dev/null && [ -f "$_afile" ] && [ -f "$_afile.ts" ]; then
+    _amt="$(cat "$_afile.ts" 2>/dev/null || echo 0)"
+    case "$_amt" in ''|*[!0-9]*) _amt=0 ;; esac
+    if [ $(( $(date +%s) - _amt )) -lt "$_ac" ]; then
+      cat "$_afile"
+      return 0
+    fi
+  fi
   zte_login
   _r="$(ubus_auth "zwrt_apn_object" "getApnAtCid" '{"cid":1}' "getApnAtCid")"
   zte_logout
@@ -751,9 +778,14 @@ do_apn() {
   _valid="$(jf "$_r" '@[0].result[1].isValid')"
   [ -n "$_prof" ] || die "APN query failed"
   case "$_pdp" in 1) _pdpn="IPv4";; 2) _pdpn="IPv6";; 3) _pdpn="IPv4v6";; *) _pdpn="$_pdp";; esac
-  if [ "$1" = "--json" ]; then
-    printf '{"profile":"%s","apn":"%s","pdp":"%s","auth":%s,"user":"%s","valid":%s}\n' \
-      "$_prof" "$_apn" "$_pdpn" "${_auth:-0}" "$_user" "${_valid:-0}"
+  if [ "$_aj" = "1" ]; then
+    _aout="$(printf '{"profile":"%s","apn":"%s","pdp":"%s","auth":%s,"user":"%s","valid":%s}\n' \
+      "$_prof" "$_apn" "$_pdpn" "${_auth:-0}" "$_user" "${_valid:-0}")"
+    if [ "$_ac" -gt 0 ] 2>/dev/null; then
+      printf '%s' "$_aout" > "$_afile" 2>/dev/null
+      date +%s > "$_afile.ts" 2>/dev/null
+    fi
+    printf '%s' "$_aout"
     return 0
   fi
   printf -- '--- APN (read-only) ---\n'
@@ -894,14 +926,17 @@ Usage: zte_mc7500.sh [--debug] <cmd> [args]
   connect           bring the data session up (modem homepage button)
   disconnect        take the data session down
   reconnect         data session down, wait, up
-  bands [--json]    show radio policy: band locks, net mode, antenna, APN
+  bands [--json] [--cache N]
+                show radio policy: band locks, net mode, antenna
   bandlock lte|sa|nsa <bands>
                 lock radio bands, e.g. bandlock lte 3,5  (ADVANCED)
   bandunlock        reset bands + cell locks to modem auto state (ADVANCED)
   netmode [mode]    show/set network mode: WL_AND_5G, LTE_AND_5G,
-                Only_5G, Only_LTE (ADVANCED)
-  antenna [mode]    show/set ODU antenna: auto, front_directional (ADVANCED)
-  apn [--json]      show current APN profile (read-only)
+                Only_5G, Only_LTE, NETWORK_auto (ADVANCED)
+  antenna [mode]    show/set ODU antenna: auto, front_directional,
+                rear_directional, omni (ADVANCED)
+  apn [--json] [--cache N]
+                show current APN profile (read-only)
   states list|save|restore|delete <name>
                 save/restore named radio states to /etc/zte_mc7500.states
   schedule [show|on|off|apply|HH:MM]
@@ -962,12 +997,38 @@ case "${1:-}" in
   connect)    do_conn up ;;
   disconnect) do_conn down ;;
   reconnect)  do_conn restart ;;
-  bands)      do_bands "${2:-}" ;;
+  bands)
+    shift
+    _bj=0; _bc=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --json) _bj=1 ;;
+        --cache) _bc="${2:-0}"; shift
+          case "$_bc" in ''|*[!0-9]*) die "--cache needs seconds" ;; esac ;;
+        *) die "unknown bands option: $1" ;;
+      esac
+      shift
+    done
+    do_bands "$_bj" "$_bc"
+    ;;
   bandlock)   do_bandlock "${2:-}" "${3:-}" ;;
   bandunlock) do_bandunlock ;;
   netmode)    do_netmode "${2:-}" ;;
   antenna)    do_antenna "${2:-}" ;;
-  apn)        do_apn "${2:-}" ;;
+  apn)
+    shift
+    _aj=0; _ac=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --json) _aj=1 ;;
+        --cache) _ac="${2:-0}"; shift
+          case "$_ac" in ''|*[!0-9]*) die "--cache needs seconds" ;; esac ;;
+        *) die "unknown apn option: $1" ;;
+      esac
+      shift
+    done
+    do_apn "$_aj" "$_ac"
+    ;;
   states)     do_states "${2:-list}" "${3:-}" ;;
   schedule)   do_schedule "${2:-show}" "${3:-}" ;;
   cycle)          do_cycle "${2:-}" ;;
